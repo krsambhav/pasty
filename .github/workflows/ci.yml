@@ -60,9 +60,8 @@ jobs:
         run: scripts/smoke-test.sh build/Release/Pasty.app
       - name: Install script (fresh install, then update)
         run: |
-          (cd build && python3 -m http.server 8765 >/dev/null 2>&1 &) ; sleep 1
           DEST="$(mktemp -d)"
-          export PASTY_DOWNLOAD_BASE=http://127.0.0.1:8765 PASTY_INSTALL_DIR="$DEST" PASTY_NO_LAUNCH=1
+          export PASTY_DOWNLOAD_BASE="file://$PWD/build" PASTY_INSTALL_DIR="$DEST" PASTY_NO_LAUNCH=1
           scripts/install.sh | tee install-1.log
           grep -q "Installing Pasty" install-1.log
           codesign --verify --deep --strict "$DEST/Pasty.app"
