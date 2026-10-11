@@ -58,6 +58,17 @@ jobs:
           codesign -dv --verbose=2 "$APP" 2>&1 || true
       - name: Smoke test (launch, capture, panel timing)
         run: scripts/smoke-test.sh build/Release/Pasty.app
+      - name: Install script (fresh install, then update)
+        run: |
+          (cd build && python3 -m http.server 8765 >/dev/null 2>&1 &) ; sleep 1
+          DEST="$(mktemp -d)"
+          export PASTY_DOWNLOAD_BASE=http://127.0.0.1:8765 PASTY_INSTALL_DIR="$DEST" PASTY_NO_LAUNCH=1
+          scripts/install.sh | tee install-1.log
+          grep -q "Installing Pasty" install-1.log
+          codesign --verify --deep --strict "$DEST/Pasty.app"
+          scripts/install.sh | tee install-2.log
+          grep -q "Updating Pasty" install-2.log
+          test -x "$DEST/Pasty.app/Contents/MacOS/Pasty"
       - name: Crash report (on failure)
         if: failure()
         run: |
@@ -114,7 +125,13 @@ jobs:
           {
             echo "Automatic build of ${GITHUB_SHA::7}. Installed copies update themselves in the background."
             echo
-            echo "Install: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/Pasty.zip -o /tmp/Pasty.zip && ditto -xk /tmp/Pasty.zip /Applications && open /Applications/Pasty.app\`"
+            echo "**Install or update** (paste into Terminal):"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
+            echo '```'
+            echo
+            echo "Or download **Pasty.zip** below, unzip it, and drag Pasty.app into Applications. Requires macOS 14+ (Apple Silicon or Intel)."
           } > notes.md
           gh release create "$TAG" Pasty.zip Pasty.zip.sha256 \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \

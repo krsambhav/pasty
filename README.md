@@ -32,13 +32,21 @@ A fast, quiet clipboard history manager for macOS. Pasty lives in the menu bar, 
 - macOS 14 Sonoma or later, on Apple Silicon or Intel (universal binary)
 - Xcode 16 or later to build (Swift 6 language mode)
 
-## Install
+## Install or update
+
+Paste this into Terminal. The same command installs Pasty, or updates an existing copy to the latest release:
 
 ```bash
-curl -fsSL https://github.com/krsambhav/pasty/releases/latest/download/Pasty.zip -o /tmp/Pasty.zip && ditto -xk /tmp/Pasty.zip /Applications && open /Applications/Pasty.app
+curl -fsSL https://raw.githubusercontent.com/krsambhav/pasty/main/scripts/install.sh | bash
 ```
 
-This needs the repository to be public. Every green push to `main` publishes a release (`v1.0.<build>`), and installed copies **update themselves** in the background (see [Updates](#updates)).
+[`scripts/install.sh`](scripts/install.sh) does the following:
+1. Downloads the latest [release](https://github.com/krsambhav/pasty/releases/latest) and verifies its SHA-256 checksum.
+2. Quits Pasty if it's running, replaces `/Applications/Pasty.app`, and opens it.
+
+Requires macOS 14 Sonoma or later, on Apple Silicon or Intel. After that, Pasty **updates itself** in the background (see [Updates](#updates)). You can also download `Pasty.zip` from the [Releases page](https://github.com/krsambhav/pasty/releases) and drag `Pasty.app` into Applications.
+
+On first launch, press **⌘⇧V** to open Pasty. The first time you paste, macOS asks for **Accessibility** permission (System Settings › Privacy & Security › Accessibility). Pasty needs it to send ⌘V for you.
 
 ## Build & run
 
