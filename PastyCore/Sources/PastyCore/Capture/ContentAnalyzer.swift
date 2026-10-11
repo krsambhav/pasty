@@ -212,7 +212,7 @@ public enum ContentAnalyzer {
     }
 
     /// Plain text recovered from rich-text-only or HTML-only content.
-    static func derivedText(from item: PasteboardItemSnapshot) -> String? {
+    public static func derivedText(from item: PasteboardItemSnapshot) -> String? {
         if let data = item.data(for: PasteboardType.rtfd),
            let string = NSAttributedString(rtfd: data, documentAttributes: nil)?.string {
             return string
