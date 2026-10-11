@@ -536,7 +536,11 @@ final class SmokeTest {
                 let stored = (try? await store.search(title))?.filter { $0.title == title }.map(\.id) ?? []
                 detail = "stored ids \(stored), existing \(existing), query '\(model.query)', filter \(model.filter), "
                     + "list \(model.items.count) items, first '\(model.items.first?.title.prefix(40) ?? "-")', "
-                    + "pasteboard types \(NSPasteboard.general.types?.map(\.rawValue) ?? []), paused \(model.isPaused)"
+                    + "pasteboard types \(NSPasteboard.general.types?.map(\.rawValue) ?? []), paused \(model.isPaused), "
+                    + "frontmost \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "nil")"
+                // Copy again and poll by hand to see what the monitor makes of it.
+                await externalCopy(items)
+                detail += ", manual poll: \(coordinator.monitor.pollSynchronously())"
             }
             check("large content recorded: \(name)", recorded, detail)
             results.largeContent["capture \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
