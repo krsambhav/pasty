@@ -4,6 +4,16 @@ A fast, quiet clipboard history manager for macOS. Pasty lives in the menu bar, 
 
 <p align="center"><img src="docs/icon.png" width="128" alt="Pasty icon"></p>
 
+<p align="center">
+  <img src="docs/panel-light.png" width="49%" alt="Pasty in light mode, previewing a code snippet">
+  <img src="docs/panel-dark.png" width="49%" alt="Pasty in dark mode, previewing a link">
+</p>
+<p align="center">
+  <img src="docs/panel-search-dark.png" width="49%" alt="Searching with highlighted matches">
+  <img src="docs/panel-image-light.png" width="49%" alt="Image preview">
+</p>
+<p align="center"><sub>Screenshots are captured automatically by the CI smoke test from the real app.</sub></p>
+
 - Native Swift 6, SwiftUI and AppKit. No web views, no third-party packages.
 - Local-first. History is stored in SQLite on your Mac and never sent anywhere.
 - Keyboard-first. Every action has a key.
@@ -115,10 +125,17 @@ Measured on GitHub's `macos-15` runners (Apple Silicon VMs, so slower than a typ
 
 | Metric | Result |
 | --- | --- |
-| Load full 10,000-item list | ~9.5 ms median |
-| Search, 10,000 items, single term | ~27–36 ms median (synthetic worst case: nearly every item matches) |
-| Capture + thumbnail of a 5K screenshot | ~30 ms, off the main thread |
-| Panel open, idle CPU, memory | see `smoke-results` artifact (`panelOpenMs`, `idleCPUPercent`, `residentMemoryMB`) |
+| Panel open (warm, 30 cycles) | **5.0 ms median**, 7.8 ms p95 |
+| Panel first open after launch | 26 ms |
+| Search field focused on open | yes, verified |
+| Load full 10,000-item list | ~10 ms median |
+| Search, 10,000 items, single term | ~23–30 ms median (synthetic worst case: nearly every item matches) |
+| Search, 10,000 items, two terms | ~52 ms median (same worst case; real histories match far fewer items) |
+| Capture + thumbnail of a 5K screenshot | ~32 ms, off the main thread |
+| Copy → recorded in history | ~220 ms (the polling interval) |
+| Idle CPU (10 s sample) | 0.2 % |
+| Memory (physical footprint) | ~21 MB |
+| Paste into TextEdit via ⌘V | verified via the Accessibility API |
 
 Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVStack` with `Equatable` fixed-height rows; observation scoped so selection changes don't re-render the list content; thumbnails decoded at 160 px and cached; full images downsampled with ImageIO before display; prepared statements; and queries that skip blob columns.
 
