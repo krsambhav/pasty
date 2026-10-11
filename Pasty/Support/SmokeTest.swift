@@ -78,6 +78,7 @@ final class SmokeTest {
         if results.accessibilityTrusted {
             await testKeyboard()
             await testGlobalHotKey()
+            await testMouse()
             await testPasteIntoTextEdit(marker: marker)
             await testPlainTextPaste()
         } else {
@@ -705,12 +706,74 @@ final class SmokeTest {
         check("copied image file gets a real preview", thumbnail != nil)
         let size = await FileThumbnails.shared.pixelSize(path: url.path)
         check("copied image file reports its pixel size", size == CGSize(width: 1_200, height: 760), "\(String(describing: size))")
-        check("image files are recognised for content previews", ClipIcon.hasContentPreview(url.path))
-        check("apps keep their icon", !ClipIcon.hasContentPreview("/Applications/Safari.app"))
+        check("image files are recognised for content previews", FileThumbnails.hasContentPreview(url.path))
+        check("apps keep their icon", !FileThumbnails.hasContentPreview("/Applications/Safari.app"))
 
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
         check("copied file is recorded", await waitFor(seconds: 5) { self.model.items.first?.filePath == url.path })
+    }
+
+    // MARK: - Mouse
+
+    private func clickRow(_ row: Int, in table: NSTableView, count: Int) {
+        guard let window = table.window else { return }
+        let rect = table.convert(table.rect(ofRow: row), to: nil)
+        let screenPoint = window.convertPoint(toScreen: NSPoint(x: rect.midX, y: rect.midY))
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let point = CGPoint(x: screenPoint.x, y: primaryHeight - screenPoint.y)
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for click in 1...count {
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+                event?.setIntegerValueField(.mouseEventClickState, value: Int64(click))
+                event?.post(tap: .cghidEventTap)
+            }
+        }
+    }
+
+    private func testMouse() async {
+        panel.show()
+        await settle()
+        guard let table = Self.find(ClipTableView.self, in: panel.panel.contentView), model.items.count >= 3 else {
+            return check("history table found", false)
+        }
+        let target = model.items[2]
+        // Table rows are each section's heading followed by its items.
+        var row = 0
+        var found: Int?
+        for section in model.sections {
+            row += 1
+            if let index = section.items.firstIndex(where: { $0.id == target.id }) { found = row + index; break }
+            row += section.items.count
+        }
+        guard let row = found else { return check("row for click found", false) }
+        table.scrollRowToVisible(row)
+        await nextTurn()
+
+        let clipboardBefore = pasteboard.changeCount
+        clickRow(row, in: table, count: 1)
+        check("single click selects the item", await waitFor(seconds: 2) { self.model.selectedID == target.id })
+        check("single click shows its preview", await waitFor(seconds: 3) { self.model.detail?.itemID == target.id })
+        try? await Task.sleep(for: .milliseconds(300))
+        check("single click doesn't paste or close the panel", panel.isVisible && pasteboard.changeCount == clipboardBefore)
+        check("search field keeps focus after a click", isSearchFieldFocused)
+
+        coordinator.pasteCoordinator.isAccessibilityTrusted = { false } // copy only: don't paste into the runner
+        clickRow(row, in: table, count: 2)
+        check("double click uses the item", await waitFor(seconds: 3) { !self.panel.isVisible && self.pasteboard.changeCount != clipboardBefore })
+        coordinator.pasteCoordinator.isAccessibilityTrusted = { AccessibilityPermission.isGranted }
+        coordinator.hud.dismissForTesting()
+    }
+
+    private static func find<T: NSView>(_ type: T.Type, in view: NSView?) -> T? {
+        guard let view else { return nil }
+        var stack = [view]
+        while let current = stack.popLast() {
+            if let match = current as? T { return match }
+            stack.append(contentsOf: current.subviews)
+        }
+        return nil
     }
 
     // MARK: - Scrolling

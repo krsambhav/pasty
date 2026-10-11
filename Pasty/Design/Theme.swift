@@ -51,6 +51,7 @@ enum Theme {
         static let border = dynamicNS(light: 0xE4E4E7, dark: 0x27272A)
         static let popover = dynamicNS(light: 0xFFFFFF, dark: 0x0C0C0E)
         static let background = dynamicNS(light: 0xFFFFFF, dark: 0x09090B)
+        static let highlight = dynamicNS(light: 0xFEF08A, dark: 0x854D0E, lightAlpha: 0.7, darkAlpha: 0.55)
     }
 
     private static func dynamic(light: UInt32, dark: UInt32, lightAlpha: CGFloat = 1, darkAlpha: CGFloat = 1) -> Color {

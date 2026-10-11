@@ -8,10 +8,27 @@
 # by that same certificate.
 #
 # Requires: the GitHub CLI (`brew install gh`, then `gh auth login`).
-# Usage: scripts/create-signing-identity.sh [owner/repo]
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/krsambhav/pasty/main/scripts/create-signing-identity.sh | bash
+#   scripts/create-signing-identity.sh [owner/repo]
 set -euo pipefail
 
 REPO="${1:-krsambhav/pasty}"
+
+if ! command -v gh >/dev/null; then
+  echo "This needs the GitHub CLI. Install it with:  brew install gh && gh auth login" >&2
+  exit 1
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  echo "Log in to GitHub first:  gh auth login" >&2
+  exit 1
+fi
+if gh secret list --repo "$REPO" 2>/dev/null | grep -q '^MACOS_SIGNING_P12'; then
+  echo "A signing identity is already configured for $REPO. Replacing it would make installed copies"
+  echo "reject future updates (they only accept the same signer). Delete the MACOS_SIGNING_P12 secret"
+  echo "first if you really want a new one."
+  exit 1
+fi
 NAME="Pasty Self-Signed"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -39,5 +56,10 @@ PASSWORD="$(/usr/bin/openssl rand -hex 16)"
 base64 -i "$WORK/identity.p12" | gh secret set MACOS_SIGNING_P12 --repo "$REPO"
 printf '%s' "$PASSWORD" | gh secret set MACOS_SIGNING_PASSWORD --repo "$REPO"
 
-echo "Done. The next push to main publishes a release signed by \"$NAME\"."
-echo "Install that release once (and allow Accessibility once); every later update keeps the permission."
+echo "✓ Signing identity \"$NAME\" stored in $REPO's Actions secrets."
+gh workflow run ci.yml --repo "$REPO" --ref main >/dev/null && echo "✓ Started a signed release build (takes ~5 minutes)."
+echo
+echo "When it finishes, install it once (this replaces the current copy):"
+echo "  curl -fsSL https://raw.githubusercontent.com/$REPO/main/scripts/install.sh | bash"
+echo "Then allow Pasty in System Settings › Privacy & Security › Accessibility one last time."
+echo "Every update after that keeps the permission."

@@ -92,7 +92,7 @@ The project is signed ad-hoc ("Sign to Run Locally") so it builds without a deve
 | **⌘,** | Settings |
 | **Esc** | Close |
 
-Click an item to paste it. Right-click for the full set of actions.
+Click an item to select it and see its full preview. Double-click (or press Return) to paste it. Right-click for the full set of actions.
 
 ### Paste permission
 
@@ -125,7 +125,7 @@ Pasty updates itself from this repository's GitHub Releases:
 **Keep Accessibility permission across updates (recommended, one time).** macOS ties the Accessibility grant to the app's code signature. Ad-hoc builds get a new signature every time, so each update would need the permission granted again. Run this once on your Mac (it needs `gh`):
 
 ```bash
-scripts/create-signing-identity.sh krsambhav/pasty
+curl -fsSL https://raw.githubusercontent.com/krsambhav/pasty/main/scripts/create-signing-identity.sh | bash
 ```
 
 The script creates a self-signed code-signing certificate and stores it as the `MACOS_SIGNING_P12` / `MACOS_SIGNING_PASSWORD` Actions secrets. From then on, every release is signed by that identity, and the permission survives updates. Install the first signed release manually once; signed copies only accept updates signed by the same certificate.

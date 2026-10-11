@@ -263,7 +263,7 @@ private struct SingleFilePreview: View {
                         .overlay(RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityLabel("Preview of \(url.lastPathComponent)")
-                } else if loaded || !ClipIcon.hasContentPreview(url.path) {
+                } else if loaded || !FileThumbnails.hasContentPreview(url.path) {
                     Image(nsImage: IconCache.shared.fileIcon(path: url.path))
                         .resizable()
                         .frame(width: 64, height: 64)
@@ -304,7 +304,7 @@ private struct SingleFilePreview: View {
             preview = FileThumbnails.shared.cached(path: url.path, size: 640)
             pixelSize = nil
             loaded = false
-            guard exists, ClipIcon.hasContentPreview(url.path) else { loaded = true; return }
+            guard exists, FileThumbnails.hasContentPreview(url.path) else { loaded = true; return }
             let loadedImage = await FileThumbnails.shared.thumbnail(path: url.path, size: 640)
             let loadedSize = await FileThumbnails.shared.pixelSize(path: url.path)
             guard !Task.isCancelled else { return }

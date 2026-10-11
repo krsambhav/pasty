@@ -16,6 +16,11 @@ final class HUDController {
     private var hideTask: Task<Void, Never>?
 
     var isShowing: Bool { panel?.isVisible == true }
+
+    func dismissForTesting() {
+        hideTask?.cancel()
+        panel?.orderOut(nil)
+    }
     var windowNumber: Int? { panel?.windowNumber }
 
     func show(_ message: HUDMessage, duration: TimeInterval = 2.2) {
