@@ -30,6 +30,7 @@ final class SmokeTest {
         var pasteLatencyMs: [Double] = []
         var largeContent: [String: Double] = [:]
         var mainThreadMaxStallMs: Double?
+        var scroll: [String: Double] = [:]
         var stressCycles = 0
         var stressMemoryGrowthMB: Double?
         var idleCPUPercent: Double?
@@ -85,6 +86,7 @@ final class SmokeTest {
         await testLargeContent()
         await testUpdater()
         await testFilePreview()
+        await testScrollPerformance()
         await testStress()
         await captureScreenshots()
         await measureIdle()
@@ -709,6 +711,80 @@ final class SmokeTest {
         pasteboard.clearContents()
         pasteboard.writeObjects([url as NSURL])
         check("copied file is recorded", await waitFor(seconds: 5) { self.model.items.first?.filePath == url.path })
+    }
+
+    // MARK: - Scrolling
+
+    /// Fills history with 2,000 mixed entries, then scrolls the list in 40 pt steps, timing the
+    /// synchronous layout + draw of each step. At 120 Hz a frame has 8.3 ms.
+    private func testScrollPerformance() async {
+        let kinds: [(String, Data)] = [
+            (PasteboardType.string, Data("let value = try await service.fetch(id: 42, retries: 3)\nreturn value".utf8)),
+            (PasteboardType.string, Data("https://example.com/articles/scrolling-at-120-hz".utf8)),
+            (PasteboardType.string, Data("#3B82F6".utf8)),
+            (PasteboardType.string, Data("Meeting notes: ship the release on Friday after QA signs off".utf8)),
+            (PasteboardType.fileURL, Data(URL(fileURLWithPath: "/System/Applications/TextEdit.app").absoluteString.utf8)),
+            (PasteboardType.png, Self.demoImage()),
+        ]
+        let sources = [("com.apple.Safari", "Safari"), ("com.apple.dt.Xcode", "Xcode"), ("com.apple.Notes", "Notes"), ("com.apple.finder", "Finder"), ("com.apple.Terminal", "Terminal")]
+        for index in 0..<2_000 {
+            let (type, base) = kinds[index % kinds.count]
+            var data = base
+            if type == PasteboardType.string { data.append(Data(" #\(index)".utf8)) }
+            if type == PasteboardType.png, index > 6 { continue } // a few images are enough
+            let snapshot = PasteboardSnapshot(items: [PasteboardItemSnapshot(representations: [PasteboardRepresentation(type: type, data: data)])])
+            guard var draft = ContentAnalyzer.analyze(snapshot) else { continue }
+            draft.source = SourceApp(bundleID: sources[index % sources.count].0, name: sources[index % sources.count].1)
+            draft.date = Date().addingTimeInterval(-Double(index) * 97)
+            _ = try? await store.insert(draft, duplicates: .keepAll, maxHistory: 50_000)
+        }
+        await model.reload()
+        panel.show()
+        await settle()
+
+        guard let scrollView = Self.largestScrollView(in: panel.panel.contentView) else {
+            return check("list scroll view found", false)
+        }
+        let clip = scrollView.contentView
+        let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height)
+        results.scroll["rows"] = Double(model.items.count)
+        results.scroll["document height pt"] = (maxY).rounded()
+
+        var samples: [Double] = []
+        var y: CGFloat = 0
+        // Scroll down 400 steps (or to the end), then back up — like a long trackpad fling.
+        for step in 0..<800 {
+            y = step < 400 ? min(maxY, y + 40) : max(0, y - 40)
+            let start = DispatchTime.now().uptimeNanoseconds
+            clip.scroll(to: NSPoint(x: 0, y: y))
+            scrollView.reflectScrolledClipView(clip)
+            panel.panel.displayIfNeeded()
+            samples.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+            if step % 20 == 0 { await nextTurn() } // let async thumbnail loads land, like real frames
+        }
+        samples.sort()
+        func pct(_ p: Double) -> Double { (samples[min(samples.count - 1, Int(Double(samples.count) * p))] * 100).rounded() / 100 }
+        results.scroll["frame median ms"] = pct(0.5)
+        results.scroll["frame p95 ms"] = pct(0.95)
+        results.scroll["frame p99 ms"] = pct(0.99)
+        results.scroll["frame max ms"] = (samples.last! * 100).rounded() / 100
+        results.scroll["frames over 8.3 ms (120 Hz budget)"] = Double(samples.filter { $0 > 8.33 }.count)
+        panel.hide()
+        check("list scrolls within the 120 Hz frame budget (p95 < 8.3 ms)", pct(0.95) < 8.33, "p95 \(pct(0.95)) ms")
+    }
+
+    private static func largestScrollView(in view: NSView?) -> NSScrollView? {
+        guard let view else { return nil }
+        var best: NSScrollView?
+        var stack = [view]
+        while let current = stack.popLast() {
+            if let scroll = current as? NSScrollView,
+               (scroll.documentView?.frame.height ?? 0) > (best?.documentView?.frame.height ?? 0) {
+                best = scroll
+            }
+            stack.append(contentsOf: current.subviews)
+        }
+        return best
     }
 
     // MARK: - Stress & idle
