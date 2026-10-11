@@ -10,12 +10,22 @@ OUT="$(pwd)/build/smoke"
 rm -rf "$OUT"; mkdir -p "$OUT"
 DATA="$(mktemp -d)"
 
-set +e
-timeout 300 open -n -W \
+open -n -W \
   --env "PASTY_DATA_DIR=$DATA" \
   --stdout "$OUT/stdout.log" --stderr "$OUT/stderr.log" \
-  "$APP" --args --smoke-test "$OUT"
-STATUS=$?
+  "$APP" --args --smoke-test "$OUT" &
+PID=$!
+for _ in $(seq 1 300); do
+  kill -0 "$PID" 2>/dev/null || break
+  sleep 1
+done
+if kill -0 "$PID" 2>/dev/null; then
+  echo "Smoke test timed out" >&2
+  pkill -f "Pasty.app/Contents/MacOS/Pasty" || true
+  kill "$PID" || true
+fi
+set +e
+wait "$PID"; STATUS=$?
 set -e
 
 if [[ -f "$OUT/results.json" ]]; then
