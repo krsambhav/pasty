@@ -87,7 +87,8 @@ public struct ClipDraft: Sendable {
 public enum ContentAnalyzer {
     public static let previewLimit = 2_000
     public static let titleLimit = 240
-    public static let searchLimit = 200_000
+    /// Characters indexed for search: enough for 10,000+ lines of code.
+    public static let searchLimit = 1_048_576
     public static let thumbnailPixelSize = 160
 
     public static func analyze(_ snapshot: PasteboardSnapshot, generateThumbnail: Bool = true) -> ClipDraft? {

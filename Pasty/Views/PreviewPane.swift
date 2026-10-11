@@ -24,16 +24,14 @@ struct PreviewPane: View {
     private func content(for item: ClipItem) -> some View {
         if let detail = model.detail, detail.itemID == item.id {
             switch detail.content {
-            case let .text(text, isCode, truncated):
-                TextPreview(content: .plain(text, monospaced: isCode), itemID: item.id)
+            case let .document(document, truncated):
+                TextPreview(document: document, itemID: item.id)
                     .overlay(alignment: .bottomTrailing) {
                         if truncated {
-                            Badge(text: "Preview truncated", variant: .outline)
+                            Badge(text: "Preview shortened · full text pastes", variant: .outline)
                                 .padding(10)
                         }
                     }
-            case let .rich(attributed):
-                TextPreview(content: .rich(attributed), itemID: item.id)
             case let .image(image, pixelSize):
                 ImagePreview(image: image, pixelSize: pixelSize)
             case let .files(urls):
@@ -127,33 +125,39 @@ private struct FlowBadges: View {
 
 // MARK: - Text
 
-/// A read-only, selectable NSTextView: fast for very large text and faithful for rich text.
+/// A read-only, selectable TextKit 2 text view. TextKit 2 lays out only what is on screen, so
+/// a 10,000-line document costs the same to show as a ten-line one. The attributed string arrives
+/// fully prepared (see `DetailBuilder`); this view only swaps it in.
 struct TextPreview: NSViewRepresentable {
-    enum Content {
-        case plain(String, monospaced: Bool)
-        case rich(NSAttributedString)
-    }
-
-    let content: Content
+    let document: NSAttributedString
     let itemID: ClipItem.ID
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSTextView.scrollableTextView()
+        let textView = NSTextView(usingTextLayoutManager: true)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.isRichText = true
+        textView.isAutomaticLinkDetectionEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isGrammarCheckingEnabled = false
+        textView.textContainerInset = NSSize(width: 12, height: 8)
+        textView.textContainer?.lineFragmentPadding = 4
+        textView.textContainer?.widthTracksTextView = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.selectedTextAttributes = [.backgroundColor: Theme.NS.accent]
+        textView.setAccessibilityLabel("Preview")
+
+        let scrollView = NSScrollView()
         scrollView.drawsBackground = false
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
-        if let textView = scrollView.documentView as? NSTextView {
-            textView.isEditable = false
-            textView.isSelectable = true
-            textView.drawsBackground = false
-            textView.textContainerInset = NSSize(width: 12, height: 8)
-            textView.isAutomaticLinkDetectionEnabled = false
-            textView.isRichText = true
-            textView.textContainer?.lineFragmentPadding = 4
-            textView.selectedTextAttributes = [.backgroundColor: Theme.NS.accent]
-            textView.setAccessibilityLabel("Preview")
-        }
+        scrollView.documentView = textView
         return scrollView
     }
 
@@ -161,46 +165,11 @@ struct TextPreview: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView,
               context.coordinator.itemID != itemID else { return }
         context.coordinator.itemID = itemID
-        switch content {
-        case let .plain(text, monospaced):
-            let font: NSFont = monospaced
-                ? .monospacedSystemFont(ofSize: 12, weight: .regular)
-                : Typeface.nsFont(13.5)
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = monospaced ? 2.5 : 3.5
-            textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
-                .font: font, .foregroundColor: Theme.NS.foreground, .paragraphStyle: paragraph,
-            ]))
-        case let .rich(attributed):
-            textView.textStorage?.setAttributedString(Self.adaptingDefaultColors(attributed))
-        }
-        textView.scrollToBeginningOfDocument(nil)
+        textView.textStorage?.setAttributedString(document)
+        textView.scroll(.zero)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
-
-    /// Rich text usually hard-codes black text; map default-looking colors to the dynamic
-    /// foreground so it stays legible in Dark Mode, while keeping intentional colors intact.
-    static func adaptingDefaultColors(_ source: NSAttributedString) -> NSAttributedString {
-        let result = NSMutableAttributedString(attributedString: source)
-        let full = NSRange(location: 0, length: result.length)
-        let foreground = Theme.NS.foreground
-        result.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
-            guard let color = (value as? NSColor)?.usingColorSpace(.sRGB) else {
-                result.addAttribute(.foregroundColor, value: foreground, range: range)
-                return
-            }
-            if color.saturationComponent < 0.1, color.brightnessComponent < 0.2 {
-                result.addAttribute(.foregroundColor, value: foreground, range: range)
-            }
-        }
-        result.enumerateAttribute(.backgroundColor, in: full) { value, range, _ in
-            if let color = (value as? NSColor)?.usingColorSpace(.sRGB), color.saturationComponent < 0.1, color.brightnessComponent > 0.9 {
-                result.removeAttribute(.backgroundColor, range: range)
-            }
-        }
-        return result
-    }
 
     final class Coordinator {
         var itemID: ClipItem.ID?

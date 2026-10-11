@@ -39,6 +39,9 @@ enum Theme {
 
     // MARK: Helpers
 
+    /// The foreground token as a dynamic `NSColor`, usable off the main thread.
+    static let foregroundNS = dynamicNS(light: 0x09090B, dark: 0xFAFAFA)
+
     /// The same tokens as dynamic `NSColor`s, for AppKit views (text fields, text views).
     @MainActor
     enum NS {

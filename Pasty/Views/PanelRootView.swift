@@ -145,10 +145,10 @@ struct SearchField: NSViewRepresentable {
 
         func controlTextDidChange(_ notification: Notification) {
             guard let field = notification.object as? NSTextField else { return }
-            // Pasting multi-line text into a search box should search its first line's words.
+            // Pasting a wall of (multi-line) text into the search box: keep a short, single line.
             let value = field.stringValue
-            if value.contains(where: \.isNewline) {
-                let flattened = value.split(whereSeparator: \.isNewline).joined(separator: " ")
+            if value.utf16.count > 512 || value.contains(where: \.isNewline) {
+                let flattened = String(value.prefix(512).split(whereSeparator: \.isNewline).joined(separator: " "))
                 field.stringValue = flattened
                 text.wrappedValue = flattened
             } else {

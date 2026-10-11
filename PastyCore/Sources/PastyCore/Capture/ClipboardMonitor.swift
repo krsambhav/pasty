@@ -110,6 +110,19 @@ public final class ClipboardMonitor: @unchecked Sendable {
         }
     }
 
+    /// Asynchronous variant of `write(_:)`: the caller (typically the main thread) is never
+    /// blocked, even if the monitor is busy analysing a large copy.
+    @discardableResult
+    public func write(_ snapshot: PasteboardSnapshot) async -> Int {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
+            queue.async { [self] in
+                let changeCount = PasteboardIO.write(snapshot, to: pasteboard, sourceBundleID: ownBundleID)
+                lastChangeCount = changeCount
+                continuation.resume(returning: changeCount)
+            }
+        }
+    }
+
     // MARK: Polling
 
     private func tick() {

@@ -28,6 +28,9 @@ final class SmokeTest {
         var panelOpenMs: Stats?
         var panelFirstOpenMs: Double?
         var pasteLatencyMs: [Double] = []
+        var largeContent: [String: Double] = [:]
+        var mainThreadMaxStallMs: Double?
+        var mainThreadP99StallMs: Double?
         var stressCycles = 0
         var stressMemoryGrowthMB: Double?
         var idleCPUPercent: Double?
@@ -80,6 +83,7 @@ final class SmokeTest {
         } else {
             results.notes.append("Accessibility not granted: keystroke, hotkey and paste-into-app checks skipped.")
         }
+        await testLargeContent()
         await testStress()
         await captureScreenshots()
         await measureIdle()
@@ -439,6 +443,113 @@ final class SmokeTest {
         return value as? String
     }
 
+    // MARK: - Large content (10,000-line code, 10 MB single line)
+
+    static func code(lines: Int) -> String {
+        (0..<lines).map { index in
+            switch index % 5 {
+            case 0: "func handler\(index)(request: Request) async throws -> Response {"
+            case 1: "    let value\(index) = try await service.fetch(id: \(index), retries: 3)"
+            case 2: "    guard value\(index).isValid else { throw APIError.invalid(\"\(index)\") }"
+            case 3: "    return Response(status: .ok, body: value\(index).encoded())"
+            default: "}"
+            }
+        }.joined(separator: "\n")
+    }
+
+    /// Syntax-colored RTF, like Xcode puts on the pasteboard.
+    static func coloredRTF(_ code: String) -> Data? {
+        let result = NSMutableAttributedString(string: code, attributes: [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.black,
+        ])
+        let keywords = try? NSRegularExpression(pattern: "\\b(func|let|guard|return|throw|try|await|async|throws)\\b")
+        let nsCode = code as NSString
+        keywords?.enumerateMatches(in: code, range: NSRange(location: 0, length: nsCode.length)) { match, _, _ in
+            if let range = match?.range { result.addAttribute(.foregroundColor, value: NSColor.systemPink, range: range) }
+        }
+        return try? result.data(from: NSRange(location: 0, length: result.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+    }
+
+    private func testLargeContent() async {
+        let watchdog = MainThreadWatchdog()
+        watchdog.start()
+        defer {
+            let stats = watchdog.stop()
+            results.mainThreadMaxStallMs = stats.max
+            results.mainThreadP99StallMs = stats.p99
+        }
+
+        let marker = "final-marker-\(UUID().uuidString.prefix(8))"
+        let plain = Self.code(lines: 10_000) + "\n// \(marker)-plain"
+        let rich = Self.code(lines: 10_000) + "\n// \(marker)-rich"
+        let minified = String(repeating: "aZ9+/", count: 2_000_000) + "\(marker)-min"
+
+        func record(_ name: String, _ write: () -> Void, title: String) async -> ClipItem? {
+            let existing = Set(model.items.filter { $0.title == title }.map(\.id))
+            let started = ContinuousClock.now
+            write()
+            let recorded = await waitFor(seconds: 10) { self.model.items.contains { $0.title == title && !existing.contains($0.id) } }
+            check("large content recorded: \(name)", recorded)
+            results.largeContent["capture \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
+            return model.items.first { $0.title == title && !existing.contains($0.id) }
+        }
+
+        let firstLine = ContentAnalyzer.makeTitle(from: plain)
+        guard let plainItem = await record("10k-line code", { copy(plain) }, title: firstLine) else { return }
+        results.largeContent["10k-line code KB"] = Double(plain.utf8.count / 1_024)
+
+        guard let rtf = Self.coloredRTF(rich) else { return check("colored RTF fixture", false) }
+        results.largeContent["10k-line colored RTF KB"] = Double(rtf.count / 1_024)
+        let richItem = await record("10k-line colored RTF", {
+            pasteboard.clearContents()
+            let entry = NSPasteboardItem()
+            entry.setData(rtf, forType: .rtf)
+            entry.setString(rich, forType: .string)
+            pasteboard.writeObjects([entry])
+        }, title: firstLine)
+        let minifiedItem = await record("10 MB single line", { copy(minified) }, title: ContentAnalyzer.makeTitle(from: minified))
+
+        panel.show()
+        await settle()
+        for (name, item) in [("10k-line code", plainItem), ("10k-line colored RTF", richItem), ("10 MB single line", minifiedItem)] {
+            guard let item, model.items.contains(where: { $0.id == item.id }) else { continue }
+            let started = ContinuousClock.now
+            model.select(item)
+            let shown = await waitFor(seconds: 5) { self.model.detail?.itemID == item.id }
+            panel.panel.displayIfNeeded()
+            check("preview appears: \(name)", shown)
+            results.largeContent["preview \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
+        }
+        check("10k-line code previews as code", plainItem.isCode)
+
+        // Holding ↓ across large entries.
+        model.select(model.items[0])
+        let flickStart = ContinuousClock.now
+        for _ in 0..<min(12, model.items.count - 1) {
+            model.moveSelection(by: 1)
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+        results.largeContent["12 rapid ↓ across large entries ms"] = ((ContinuousClock.now - flickStart).milliseconds * 10).rounded() / 10
+
+        let searchStart = ContinuousClock.now
+        model.query = "\(marker)-plain"
+        let found = await waitFor(seconds: 5) { self.model.items.first?.id == plainItem.id }
+        check("search finds text on the last of 10,000 lines", found)
+        results.largeContent["search last line ms"] = ((ContinuousClock.now - searchStart).milliseconds * 10).rounded() / 10
+
+        model.query = String(plain.prefix(5_000))
+        check("pasting a huge query into search stays responsive", await waitFor(seconds: 3) { self.model.hasLoaded })
+        panel.hide()
+
+        if results.accessibilityTrusted {
+            let result = await paste(plainItem, action: .paste, expecting: "\(marker)-plain")
+            check("paste 10k-line code into TextEdit (last line arrives)", result == "verified", result)
+        }
+        await settle()
+        let stats = watchdog.snapshot()
+        check("main thread never stalls > 100 ms with large content", stats.max < 100, "max \(stats.max) ms")
+    }
+
     // MARK: - Stress & idle
 
     private func testStress() async {
@@ -631,6 +742,42 @@ final class SmokeTest {
         }
         guard result == 0 else { return nil }
         return (Double(info.ri_phys_footprint) / 1_048_576 * 10).rounded() / 10
+    }
+}
+
+/// Measures main-thread responsiveness: a background timer posts to the main queue every 5 ms
+/// and records how late each post runs. Any UI work blocking the main thread shows up as a stall.
+final class MainThreadWatchdog: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "app.pasty.watchdog", qos: .userInteractive)
+    private let lock = NSLock()
+    private var samples: [Double] = []
+    private var timer: DispatchSourceTimer?
+
+    func start() {
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self] in
+            let posted = DispatchTime.now().uptimeNanoseconds
+            DispatchQueue.main.async {
+                let delay = Double(DispatchTime.now().uptimeNanoseconds - posted) / 1_000_000
+                self?.lock.withLock { self?.samples.append(delay) }
+            }
+        }
+        self.timer = timer
+        timer.resume()
+    }
+
+    func snapshot() -> (max: Double, p99: Double) {
+        let sorted = lock.withLock { samples.sorted() }
+        guard !sorted.isEmpty else { return (0, 0) }
+        let p99 = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.99))]
+        return ((sorted.last! * 10).rounded() / 10, (p99 * 10).rounded() / 10)
+    }
+
+    func stop() -> (max: Double, p99: Double) {
+        timer?.cancel()
+        timer = nil
+        return snapshot()
     }
 }
 

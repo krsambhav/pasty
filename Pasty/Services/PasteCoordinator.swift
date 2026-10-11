@@ -55,14 +55,17 @@ final class PasteCoordinator {
             hud.show(.init(symbol: "exclamationmark.triangle", title: "Couldn’t restore this item", detail: "Its stored contents are missing or unreadable."))
             return false
         }
-        if action == .pastePlainText, let plain = snapshot.plainTextOnly() {
-            snapshot = plain
-        }
-
-        // Written on the monitor's queue so the change is never recorded as a new entry.
-        monitor.write(snapshot)
+        // Dismiss first: the panel disappears the instant the user chooses, whatever the size.
         let target = panel?.previousApp
         panel?.hide()
+
+        if action == .pastePlainText {
+            let original = snapshot
+            snapshot = await Task.detached(priority: .userInitiated) { original.plainTextOnly() ?? original }.value
+        }
+        // Written on the monitor's queue (never blocking the main thread) so the change is never
+        // recorded as a new entry.
+        await monitor.write(snapshot)
 
         Task {
             try? await store.markUsed(item.id)

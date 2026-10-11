@@ -4,8 +4,8 @@ import PastyCore
 
 /// The content of the preview pane for the selected entry.
 enum ClipDetailContent {
-    case text(String, isCode: Bool, truncated: Bool)
-    case rich(NSAttributedString)
+    /// Plain or rich text, already styled for display.
+    case document(NSAttributedString, truncated: Bool)
     case image(NSImage, pixelSize: CGSize)
     case files([URL])
     case link(URL, display: String)
@@ -241,27 +241,48 @@ final class PanelModel {
         }
         if detail?.itemID != item.id { detail = nil }
         detailTask = Task { [weak self, store] in
-            let content = await Self.makeDetail(for: item, store: store)
+            // While the user flicks through the list, don't start decoding large previews for
+            // rows they only pass over.
+            if item.byteSize > DetailBuilder.debounceThreshold {
+                try? await Task.sleep(for: .milliseconds(70))
+                guard !Task.isCancelled else { return }
+            }
+            let prepared = await DetailBuilder.build(for: item, store: store)
             guard !Task.isCancelled, let self, self.selectedID == item.id else { return }
-            self.detail = ClipDetail(itemID: item.id, content: content)
+            self.detail = ClipDetail(itemID: item.id, content: prepared.value)
         }
     }
+}
 
-    private static let maxPreviewCharacters = 300_000
-    private static let maxRichPreviewBytes = 2_000_000
+/// Builds preview content entirely off the main thread: loading, decoding, RTF parsing, text
+/// styling and image downsampling. The main thread only swaps the finished result in, so even a
+/// 10,000-line or multi-megabyte entry never stalls the UI.
+enum DetailBuilder {
+    /// Entries larger than this get a short debounce before their preview is prepared.
+    static let debounceThreshold = 200_000
+    /// Characters shown in the preview (the full content is always what gets pasted).
+    static let maxPreviewCharacters = 300_000
+    /// Text with lines longer than this (minified code, base64) is previewed more briefly,
+    /// because laying out one enormous paragraph is expensive.
+    static let longLineThreshold = 10_000
+    static let longLinePreviewCharacters = 50_000
+    static let maxRichPreviewBytes = 1_000_000
 
-    private static func makeDetail(for item: ClipItem, store: ClipboardStore) async -> ClipDetailContent {
-        guard let snapshot = try? await store.snapshot(for: item.id), let first = snapshot.items.first else {
-            return .unavailable
+    static func build(for item: ClipItem, store: ClipboardStore) async -> UncheckedSendable<ClipDetailContent> {
+        guard let snapshot = try? await store.snapshot(for: item.id) else {
+            return UncheckedSendable(value: .unavailable)
         }
+        return await Task.detached(priority: .userInitiated) {
+            UncheckedSendable(value: content(for: item, snapshot: snapshot))
+        }.value
+    }
+
+    private static func content(for item: ClipItem, snapshot: PasteboardSnapshot) -> ClipDetailContent {
+        guard let first = snapshot.items.first else { return .unavailable }
         switch item.kind {
         case .image:
-            guard let image = first.data(forAnyOf: PasteboardType.images) else { return .unavailable }
-            let data = image.data
-            let decoded = await Task.detached(priority: .userInitiated) {
-                ImageTools.downsample(data, maxPixelSize: 1_600).map(UncheckedSendable.init)
-            }.value
-            guard let cgImage = decoded?.value else { return .unavailable }
+            guard let image = first.data(forAnyOf: PasteboardType.images),
+                  let cgImage = ImageTools.downsample(image.data, maxPixelSize: 1_600) else { return .unavailable }
             let size = CGSize(width: item.imageWidth, height: item.imageHeight)
             return .image(NSImage(cgImage: cgImage, size: .zero), pixelSize: size)
         case .file:
@@ -270,8 +291,8 @@ final class PanelModel {
             guard let text = snapshot.plainText, let url = ContentAnalyzer.detectURL(in: text) else { return .unavailable }
             return .link(url, display: ContentAnalyzer.readableURL(url))
         case .richText:
-            if let rich = richText(from: first) { return .rich(rich) }
-            return plainText(snapshot, item: item)
+            if let rich = richText(from: first) { return .document(rich, truncated: false) }
+            return plainDocument(snapshot, item: item)
         case .other:
             if let pdf = first.data(for: PasteboardType.pdf), pdf.count <= maxRichPreviewBytes * 5,
                let image = NSImage(data: pdf) {
@@ -279,30 +300,83 @@ final class PanelModel {
             }
             return .data(snapshot.items.flatMap(\.types))
         case .text:
-            if let color = ColorParser.parse(item.title), item.lineCount == 1 {
+            if item.lineCount == 1, let color = ColorParser.parse(item.title) {
                 return .color(color, item.title)
             }
-            return plainText(snapshot, item: item)
+            return plainDocument(snapshot, item: item)
         }
     }
 
-    private static func plainText(_ snapshot: PasteboardSnapshot, item: ClipItem) -> ClipDetailContent {
-        guard let text = snapshot.plainText else { return .unavailable }
-        let truncated = text.utf16.count > maxPreviewCharacters
-        return .text(truncated ? String(text.prefix(maxPreviewCharacters)) : text, isCode: item.isCode, truncated: truncated)
+    /// The previewed slice of `text`, shortened further when it contains very long lines.
+    static func previewSlice(of text: String) -> (text: String, truncated: Bool) {
+        var limit = maxPreviewCharacters
+        var lineLength = 0
+        var scanned = 0
+        for unit in text.utf16 {
+            scanned += 1
+            if scanned > maxPreviewCharacters { break }
+            if unit == 10 { lineLength = 0; continue }
+            lineLength += 1
+            if lineLength > longLineThreshold {
+                limit = longLinePreviewCharacters
+                break
+            }
+        }
+        guard text.utf16.count > limit else { return (text, false) }
+        // Cut on a Character boundary at or before `limit` UTF-16 units.
+        let index = text.utf16.index(text.utf16.startIndex, offsetBy: limit)
+        let boundary = index.samePosition(in: text) ?? text.index(before: index)
+        return (String(text[..<boundary]), true)
+    }
+
+    private static func plainDocument(_ snapshot: PasteboardSnapshot, item: ClipItem) -> ClipDetailContent {
+        guard let full = snapshot.plainText ?? snapshot.items.first.flatMap(ContentAnalyzer.derivedText) else {
+            return .unavailable
+        }
+        let (text, truncated) = previewSlice(of: full)
+        let font: NSFont = item.isCode ? .monospacedSystemFont(ofSize: 12, weight: .regular) : Typeface.nsFont(13.5)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = item.isCode ? 2.5 : 3.5
+        let document = NSAttributedString(string: text, attributes: [
+            .font: font, .foregroundColor: Theme.foregroundNS, .paragraphStyle: paragraph,
+        ])
+        return .document(document, truncated: truncated)
     }
 
     private static func richText(from item: PasteboardItemSnapshot) -> NSAttributedString? {
-        if let data = item.data(for: PasteboardType.rtfd), data.count <= maxRichPreviewBytes,
-           let string = NSAttributedString(rtfd: data, documentAttributes: nil) {
-            return string
+        var parsed: NSAttributedString?
+        if let data = item.data(for: PasteboardType.rtfd), data.count <= maxRichPreviewBytes {
+            parsed = NSAttributedString(rtfd: data, documentAttributes: nil)
         }
-        if let data = item.data(for: PasteboardType.rtf), data.count <= maxRichPreviewBytes,
-           let string = NSAttributedString(rtf: data, documentAttributes: nil) {
-            return string
+        if parsed == nil, let data = item.data(for: PasteboardType.rtf), data.count <= maxRichPreviewBytes {
+            parsed = NSAttributedString(rtf: data, documentAttributes: nil)
         }
-        // HTML import spins up WebKit and is too slow for a live preview; plain text is used instead.
-        return nil
+        // HTML import spins up WebKit and is main-thread only; such entries preview as plain text.
+        guard let parsed, parsed.length <= maxPreviewCharacters else { return nil }
+        return adaptingDefaultColors(parsed)
+    }
+
+    /// Rich text usually hard-codes black text; map default-looking colors to the dynamic
+    /// foreground so it stays legible in Dark Mode, while keeping intentional colors intact.
+    static func adaptingDefaultColors(_ source: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: source)
+        let full = NSRange(location: 0, length: result.length)
+        let foreground = Theme.foregroundNS
+        result.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
+            guard let color = (value as? NSColor)?.usingColorSpace(.sRGB) else {
+                result.addAttribute(.foregroundColor, value: foreground, range: range)
+                return
+            }
+            if color.saturationComponent < 0.1, color.brightnessComponent < 0.2 {
+                result.addAttribute(.foregroundColor, value: foreground, range: range)
+            }
+        }
+        result.enumerateAttribute(.backgroundColor, in: full) { value, range, _ in
+            if let color = (value as? NSColor)?.usingColorSpace(.sRGB), color.saturationComponent < 0.1, color.brightnessComponent > 0.9 {
+                result.removeAttribute(.backgroundColor, range: range)
+            }
+        }
+        return result
     }
 }
 

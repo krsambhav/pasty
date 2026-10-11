@@ -7,11 +7,15 @@ public struct SearchQuery: Sendable, Equatable {
     /// Distinct whitespace-separated terms, lowercased.
     public let tokens: [String]
 
+    /// Bounds that keep a pasted wall of text from turning into an enormous query.
+    public static let maxPhraseLength = 256
+    public static let maxTokens = 12
+
     public init(_ raw: String) {
-        let phrase = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let phrase = String(raw.prefix(Self.maxPhraseLength * 2).trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(Self.maxPhraseLength))
         self.phrase = phrase
         var seen = Set<String>()
-        tokens = phrase.split(whereSeparator: \.isWhitespace).map(String.init).filter { seen.insert($0).inserted }
+        tokens = Array(phrase.split(whereSeparator: \.isWhitespace).map(String.init).filter { seen.insert($0).inserted }.prefix(Self.maxTokens))
     }
 
     public var isEmpty: Bool { tokens.isEmpty }
