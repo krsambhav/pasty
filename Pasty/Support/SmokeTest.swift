@@ -196,19 +196,19 @@ struct SmokeTest {
         await seedDemoContent()
         let panel = coordinator.panelController!
         var files: [String] = []
-        let shots: [(String, NSAppearance.Name, String, Int)] = [
-            ("panel-light", .aqua, "", 1),
-            ("panel-dark", .darkAqua, "", 1),
-            ("panel-search-dark", .darkAqua, "swift", 0),
-            ("panel-image-light", .aqua, "", 3),
+        let shots: [(String, NSAppearance.Name, String, (ClipItem) -> Bool)] = [
+            ("panel-light", .aqua, "", { $0.isCode }),
+            ("panel-dark", .darkAqua, "", { $0.kind == .url }),
+            ("panel-search-dark", .darkAqua, "swift", { _ in true }),
+            ("panel-image-light", .aqua, "", { $0.kind == .image }),
         ]
         for (name, appearance, query, selection) in shots {
             NSApp.appearance = NSAppearance(named: appearance)
             panel.show()
             coordinator.model.query = query
             try? await Task.sleep(for: .milliseconds(250))
-            if coordinator.model.items.indices.contains(selection) {
-                coordinator.model.select(coordinator.model.items[selection])
+            if let item = coordinator.model.items.first(where: selection) {
+                coordinator.model.select(item)
             }
             try? await Task.sleep(for: .milliseconds(600))
             panel.panel.displayIfNeeded()

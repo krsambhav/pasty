@@ -30,7 +30,7 @@ struct ClipListView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
             .onChange(of: model.scrollTarget) { _, target in
                 guard let target else { return }
                 // A nil anchor scrolls the minimum distance needed — no jumpy recentering.
