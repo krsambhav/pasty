@@ -167,7 +167,11 @@ final class SmokeTest {
             if cycle == 0 {
                 results.panelFirstOpenMs = elapsed
                 check("panel becomes visible", panel.isVisible)
-                check("panel is key without activating Pasty", panel.panel.isKeyWindow && (wasActive || !NSApp.isActive))
+                let keyNow = panel.panel.isKeyWindow
+                let activeNow = NSApp.isActive
+                await nextTurn()
+                check("panel becomes key window", keyNow || panel.panel.isKeyWindow, "key now: \(keyNow), after a turn: \(panel.panel.isKeyWindow)")
+                check("showing the panel doesn't activate Pasty", wasActive || !activeNow, "was active: \(wasActive), active now: \(activeNow)")
                 check("search field focused on open", isSearchFieldFocused)
                 check("panel is on the screen under the pointer", NSScreen.screenContainingMouse.map { $0.frame.intersects(panel.panel.frame) } ?? true)
             }
