@@ -129,7 +129,7 @@ final class PreferencesTests: XCTestCase {
         let preferences = Preferences(defaults: defaults)
         XCTAssertEqual(preferences.hotKey, .default)
         XCTAssertEqual(preferences.hotKey.modifierSymbols, "⇧⌘")
-        XCTAssertEqual(preferences.maxHistory, 1_000)
+        XCTAssertEqual(preferences.maxHistory, 10_000)
         XCTAssertEqual(preferences.duplicateHandling, .moveToTop)
         XCTAssertTrue(preferences.captureImages)
         XCTAssertTrue(preferences.keepPinnedOnClear)

@@ -53,7 +53,7 @@ public enum AppearanceMode: String, Sendable, CaseIterable, Codable {
 @MainActor
 @Observable
 public final class Preferences {
-    public static let historyLimitChoices = [100, 250, 500, 1_000, 2_500, 5_000, 10_000]
+    public static let historyLimitChoices = [100, 500, 1_000, 2_500, 5_000, 10_000, 25_000, 50_000]
 
     enum Key {
         static let hotKey = "hotKey"
@@ -96,7 +96,7 @@ public final class Preferences {
         hotKey = Self.decode(KeyCombo.self, defaults, Key.hotKey) ?? .default
         showMenuBarIcon = defaults.object(forKey: Key.showMenuBarIcon) as? Bool ?? true
         appearance = (defaults.string(forKey: Key.appearance)).flatMap(AppearanceMode.init) ?? .system
-        let storedLimit = defaults.object(forKey: Key.maxHistory) as? Int ?? 1_000
+        let storedLimit = defaults.object(forKey: Key.maxHistory) as? Int ?? 10_000
         maxHistory = min(max(storedLimit, 10), 50_000)
         isPaused = defaults.bool(forKey: Key.isPaused)
         duplicateHandling = defaults.string(forKey: Key.duplicateHandling).flatMap(DuplicateHandling.init) ?? .moveToTop

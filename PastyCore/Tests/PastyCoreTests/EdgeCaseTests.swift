@@ -501,7 +501,7 @@ final class PreferencesEdgeCaseTests: XCTestCase {
 
         let preferences = Preferences(defaults: defaults)
         XCTAssertEqual(preferences.hotKey, .default)
-        XCTAssertEqual(preferences.maxHistory, 1_000)
+        XCTAssertEqual(preferences.maxHistory, 10_000)
         XCTAssertEqual(preferences.appearance, .system)
         XCTAssertEqual(preferences.duplicateHandling, .moveToTop)
         XCTAssertEqual(preferences.excludedApps, DefaultExclusions.apps)
