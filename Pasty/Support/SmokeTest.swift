@@ -757,14 +757,18 @@ final class MainThreadWatchdog: @unchecked Sendable {
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now(), repeating: .milliseconds(5), leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
+            guard let watchdog = self else { return }
             let posted = DispatchTime.now().uptimeNanoseconds
             DispatchQueue.main.async {
-                let delay = Double(DispatchTime.now().uptimeNanoseconds - posted) / 1_000_000
-                self?.lock.withLock { self?.samples.append(delay) }
+                watchdog.record(Double(DispatchTime.now().uptimeNanoseconds - posted) / 1_000_000)
             }
         }
         self.timer = timer
         timer.resume()
+    }
+
+    private func record(_ delay: Double) {
+        lock.withLock { samples.append(delay) }
     }
 
     func snapshot() -> (max: Double, p99: Double) {
