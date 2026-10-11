@@ -200,6 +200,19 @@ Measured on GitHub's `macos-15` runners (Apple Silicon VMs, so slower than a typ
 | Memory (physical footprint) | ~34 MB |
 | 100 rapid open/close cycles | +6.5 MB, no leak trend |
 
+**A million-item history** (1,001,684 entries, ~830 MB database), measured in the same CI run — `MillionEntryPerformanceTests` and the app smoke test:
+
+| Metric | Result |
+| --- | --- |
+| Reload the list (count, date sections, first page) | ~14–23 ms median, off the main thread |
+| Scroll 800 frames, top and half a million rows deep | **0.7 ms median, 2.1 ms p95** per frame |
+| Load the next page while scrolling (on the main thread) | under 1 ms |
+| Jump to the middle / end of history | ~25–45 ms |
+| Search a common word / a rare entry | ~15–55 ms / ~1–18 ms |
+| Search a two-letter term (scans text; time-boxed) | ~355 ms |
+| Record a copy with the limit at 1,000,000 | ~12 ms |
+| Clear history (keep pinned) | ~34 s, in the background (rare; the index for a million items is rebuilt) |
+
 **Huge entries.** These were measured end to end in the real app while a watchdog timed how late the main thread answered a ping every 5 ms (any UI stall shows up there):
 
 | 10,000 lines of code (502 KB plain, 696 KB colored RTF) and a 10 MB single-line text | Result |
@@ -229,7 +242,8 @@ Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVSt
 - **Search:** ranking order, recency ties, metadata and file names, SQL-injection and FTS-syntax queries, a 10,000-character query, Unicode case folding, short non-ASCII terms, emoji, matches beyond the preview, highlight ranges with emoji and combining marks.
 - **Privacy:** concealed, transient, auto-generated and legacy markers; excluded apps; unknown sources; the secret heuristic; the size budget; promise and synthesized types.
 - **Preferences:** defaults, persistence, corrupt stored values, clamping, an emptied exclusion list.
-- **Benchmarks:** a 10,000-entry history.
+- **Benchmarks:** a 10,000-entry history and a 1,000,000-entry history.
+- **Paging:** the paged list matches a full listing, stays exact when dates tie, jumps and seeks by position, pins, date sections from counts, the cached retention count, clearing that keeps pinned items searchable.
 
 **74 end-to-end checks** (`scripts/smoke-test.sh`) run against the built app on a throwaway database. With Accessibility granted, they drive real keystrokes through `CGEvent`:
 - Fonts are registered and used.
