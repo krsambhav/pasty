@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Darwin
 import PastyCore
+import SwiftUI
 
 /// End-to-end edge-case suite run by `Pasty --smoke-test <dir>` (used in CI).
 ///
@@ -404,7 +405,33 @@ final class SmokeTest {
         steps.append("turn: \(NSApp.isActive)")
         panel.panel.orderOut(nil)
         await nextTurn()
+        steps.append("styleMask nonactivating: \(panel.panel.styleMask.contains(.nonactivatingPanel))")
         results.notes.append("activation trace: " + steps.joined(separator: ", "))
+        _ = await waitFor(seconds: 2) { !NSApp.isActive }
+
+        // Which panel configuration keeps Pasty inactive?
+        func probe(_ name: String, _ window: NSWindow) async {
+            app.activate()
+            _ = await waitFor(seconds: 2) { !NSApp.isActive }
+            let before = NSApp.isActive
+            window.orderFrontRegardless()
+            window.makeKey()
+            await nextTurn()
+            results.notes.append("probe \(name): before \(before), after \(NSApp.isActive), key \(window.isKeyWindow)")
+            window.orderOut(nil)
+        }
+        let plain = PastyPanel(contentRect: NSRect(x: 100, y: 100, width: 200, height: 100), styleMask: [.nonactivatingPanel, .titled], backing: .buffered, defer: false)
+        await probe("titled+nonactivating", plain)
+        let borderless = PastyPanel(contentRect: NSRect(x: 100, y: 100, width: 200, height: 100), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        await probe("borderless+nonactivating", borderless)
+        let fullSize = PastyPanel(contentRect: NSRect(x: 100, y: 100, width: 200, height: 100), styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView], backing: .buffered, defer: false)
+        await probe("borderless+nonactivating+fullSize", fullSize)
+        let hosted = PastyPanel(contentRect: NSRect(x: 100, y: 100, width: 200, height: 100), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        hosted.contentView = NSHostingView(rootView: Text("probe"))
+        await probe("borderless+nonactivating+hosting", hosted)
+        panel.panel.styleMask = [.borderless, .nonactivatingPanel]
+        await probe("app panel, mask re-applied", panel.panel)
+        app.activate()
         _ = await waitFor(seconds: 2) { !NSApp.isActive }
 
         panel.show()
