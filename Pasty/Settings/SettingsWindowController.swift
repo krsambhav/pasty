@@ -113,6 +113,7 @@ struct SettingsRootView: View {
         }
         .frame(minWidth: 720, minHeight: 520)
         .background(Theme.background)
+        .ignoresSafeArea()
         .environment(\.font, .shadSM)
     }
 

@@ -137,6 +137,17 @@ public enum PasteboardType {
         "net.antelle.keeweb",
     ]
 
+    /// Legacy and UTF-16 translations that the pasteboard synthesizes on demand from the modern
+    /// types. Reading them forces synchronous conversion (and, off the main thread, a warning),
+    /// and they are regenerated automatically when the modern types are written back.
+    public static let synthesized: Set<String> = [
+        "public.utf16-external-plain-text", "public.utf16-plain-text", "com.apple.traditional-mac-plain-text",
+        "NSStringPboardType", "NeXT plain ascii pasteboard type", "Apple URL pasteboard type",
+        "NSFilenamesPboardType", "Apple PNG pasteboard type", "NeXT TIFF v4.0 pasteboard type",
+        "NeXT Rich Text Format v1.0 pasteboard type", "NeXT RTFD pasteboard type", "Apple HTML pasteboard type",
+        "Apple PDF pasteboard type", "CorePasteboardFlavorType 0x75726C20", "CorePasteboardFlavorType 0x75726C6E",
+    ]
+
     /// Types that describe file promises or other data that cannot be meaningfully replayed.
     public static let unreplayable: Set<String> = [
         "com.apple.NSFilePromiseItemMetaData",

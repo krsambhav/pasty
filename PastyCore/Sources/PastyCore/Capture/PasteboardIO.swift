@@ -25,6 +25,7 @@ public enum PasteboardIO {
             let hasRealTypes = available.contains { !$0.hasPrefix("dyn.") }
             var wanted = available.filter { type in
                 if PasteboardType.unreplayable.contains(type) || type == PasteboardType.source { return false }
+                if PasteboardType.synthesized.contains(type) { return false }
                 if hasRealTypes, type.hasPrefix("dyn.") { return false }
                 if !includeImages, PasteboardType.images.contains(type) { return false }
                 return true

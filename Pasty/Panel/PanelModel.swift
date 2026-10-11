@@ -73,6 +73,9 @@ final class PanelModel {
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var scrollToken = 0
+    /// Set when the user moves the selection after the query changed, so late-arriving results
+    /// don't yank it back to the top.
+    @ObservationIgnored private var selectionMovedSinceQueryChange = false
 
     init(store: ClipboardStore, preferences: Preferences) {
         self.store = store
@@ -101,6 +104,7 @@ final class PanelModel {
     func prepareForPresentation() {
         now = Date()
         showsQuickKeys = false
+        selectionMovedSinceQueryChange = false
         if query.isEmpty && filter == .all {
             selectFirst()
         } else {
@@ -127,6 +131,7 @@ final class PanelModel {
     }
 
     private func queryDidChange() {
+        selectionMovedSinceQueryChange = false
         queryTask?.cancel()
         queryTask = Task { [weak self] in
             await self?.runQuery(resetSelection: true)
@@ -169,7 +174,8 @@ final class PanelModel {
         if grouped != sections { sections = grouped }
         totalCount = total
         hasLoaded = true
-        if resetSelection || selectedID == nil {
+        let keepUserSelection = selectionMovedSinceQueryChange && newItems.contains { $0.id == selectedID }
+        if (resetSelection && !keepUserSelection) || selectedID == nil {
             selectFirst()
         } else if !newItems.contains(where: { $0.id == selectedID }) {
             if let previousIndex, !newItems.isEmpty {
@@ -204,6 +210,7 @@ final class PanelModel {
     }
 
     func select(_ item: ClipItem) {
+        selectionMovedSinceQueryChange = true
         selectedID = item.id
         requestScroll(to: item.id)
         announce(item)

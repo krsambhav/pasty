@@ -120,7 +120,9 @@ final class AppCoordinator {
             pasteCoordinator.perform(action, on: item)
         case let .togglePin(item):
             Task {
-                try? await store.setPinned(!item.isPinned, for: item.id)
+                // Use the stored state: the item passed in may be a stale snapshot.
+                let isPinned = (try? await store.item(item.id))?.isPinned ?? item.isPinned
+                try? await store.setPinned(!isPinned, for: item.id)
                 await model.reload()
             }
         case let .delete(item):

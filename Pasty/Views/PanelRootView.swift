@@ -224,6 +224,7 @@ private struct FooterBar: View {
 
     private var countLabel: String {
         let count = model.items.count
+        if count == 0 { return model.query.isEmpty ? "Clipboard history" : "No matches" }
         if !model.query.isEmpty { return count == 1 ? "1 match" : "\(count.formatted()) matches" }
         return count == 1 ? "1 item" : "\(count.formatted()) items"
     }

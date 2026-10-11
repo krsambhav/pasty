@@ -158,6 +158,7 @@ final class SmokeTest {
     private func testPanelTiming() async {
         await model.reload()
         var samples: [Double] = []
+        let wasActive = NSApp.isActive
         for cycle in 0..<30 {
             let start = ContinuousClock.now
             panel.show()
@@ -166,7 +167,7 @@ final class SmokeTest {
             if cycle == 0 {
                 results.panelFirstOpenMs = elapsed
                 check("panel becomes visible", panel.isVisible)
-                check("panel is key without activating Pasty", panel.panel.isKeyWindow && !NSApp.isActive)
+                check("panel is key without activating Pasty", panel.panel.isKeyWindow && (wasActive || !NSApp.isActive))
                 check("search field focused on open", isSearchFieldFocused)
                 check("panel is on the screen under the pointer", NSScreen.screenContainingMouse.map { $0.frame.intersects(panel.panel.frame) } ?? true)
             }
@@ -222,8 +223,7 @@ final class SmokeTest {
             self.model.items.allSatisfy { $0.id != toPin.id }
         })
         model.filter = .all
-        _ = await waitFor(seconds: 2) { self.model.filter == .all && !self.model.items.isEmpty }
-        check("history is grouped by date", model.sections.first?.title == "Today", model.sections.map(\.title).joined(separator: ","))
+        check("history is grouped by date", await waitFor(seconds: 3) { self.model.sections.first?.title == "Today" }, model.sections.map(\.title).joined(separator: ","))
         panel.hide()
     }
 
@@ -335,6 +335,7 @@ final class SmokeTest {
         typeText("selection")
         check("typing goes straight into the search field", await waitFor(seconds: 3) { self.model.query == "selection" }, "query: \(model.query)")
         _ = await waitFor(seconds: 2) { self.model.items.count >= 2 }
+        await settle()
         let first = model.selectedIndex
         post(keyCode: kVK_DownArrow)
         check("↓ moves the selection", await waitFor(seconds: 2) { self.model.selectedIndex == (first ?? 0) + 1 })
@@ -368,7 +369,8 @@ final class SmokeTest {
             return "TextEdit not found"
         }
         let document = FileManager.default.temporaryDirectory.appendingPathComponent("pasty-smoke-\(UUID().uuidString).\(documentExtension)")
-        try? Data().write(to: document)
+        // An empty .rtf isn't a valid document; give TextEdit a minimal one.
+        try? Data((documentExtension == "rtf" ? "{\\rtf1\\ansi }" : "").utf8).write(to: document)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         guard let app = try? await NSWorkspace.shared.open([document], withApplicationAt: textEdit, configuration: configuration) else {

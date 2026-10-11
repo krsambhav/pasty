@@ -36,7 +36,7 @@ struct ClipListView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
             }
-            .scrollIndicators(.hidden)
+            .scrollIndicators(.never)
             .onChange(of: model.scrollTarget) { _, target in
                 guard let target else { return }
                 if target.id == model.items.first?.id, let header = model.sections.first?.id {
