@@ -98,6 +98,14 @@ Click an item to select it and see its full preview. Double-click (or press Retu
 
 Pasting into another app works by sending it a ⌘V keystroke, which macOS only allows with **Accessibility** permission. The first time you paste, macOS asks for it. Until it's granted, Pasty still copies the item and tells you to press ⌘V yourself, so a paste never fails silently. You can check the status in **Settings › General**.
 
+### Import & Export
+
+**Settings › Clipboard › Import & Export** reads and writes `.clipbookarchive` folders, the format ClipBook exports. To move your ClipBook history over, open ClipBook's **Settings › Import/Export › Export History and Tags…**, then choose the exported folder in Pasty. Favorites become pinned items, and anything already in Pasty isn't duplicated. Exporting from Pasty writes the same format, so ClipBook (or another Pasty) can import it.
+
+### Large histories
+
+History size goes up to **1,000,000 items** (Settings › Clipboard › History size). The list never loads your whole history: it reads the total and the date sections from the index, then pages rows in as they scroll into view. Search reads the newest matches straight off the full-text index, so it stays fast however many items match. A million text items take roughly 1–1.5 GB on disk; images add more.
+
 ## Privacy
 
 - History lives in `~/Library/Application Support/Pasty/History.sqlite`. No accounts, sync, telemetry or favicon fetching. The only network traffic is the update check and download from GitHub, which you can turn off.
