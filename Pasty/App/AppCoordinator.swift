@@ -13,9 +13,9 @@ final class AppCoordinator {
     private(set) var panelController: PanelController!
     private(set) var pasteCoordinator: PasteCoordinator!
     private var statusItemController: StatusItemController?
-    private var settingsController: SettingsWindowController?
+    private(set) var settingsController: SettingsWindowController?
     private let hotKeys = HotKeyManager.shared
-    private let hud = HUDController()
+    let hud = HUDController()
 
     private let captures: AsyncStream<ClipDraft>
     private let captureContinuation: AsyncStream<ClipDraft>.Continuation
@@ -61,11 +61,14 @@ final class AppCoordinator {
     }
 
     func start() {
+        if !Typeface.registerBundledFonts() {
+            NSLog("Pasty: bundled fonts unavailable; using the system font")
+        }
         applyAppearance()
         pasteCoordinator = PasteCoordinator(store: store, monitor: monitor, model: model, hud: hud)
         panelController = PanelController(model: model, preferences: preferences)
         panelController.onWillShow = { [weak self] in self?.monitor.checkNow() }
-        panelController.onCommand = { [weak self] command in self?.handle(command) }
+        panelController.onCommand = { [weak self] command in self?.perform(command) }
         pasteCoordinator.panel = panelController
 
         statusItemController = StatusItemController(coordinator: self)
@@ -111,7 +114,7 @@ final class AppCoordinator {
         panelController.show()
     }
 
-    private func handle(_ command: PanelCommand) {
+    func perform(_ command: PanelCommand) {
         switch command {
         case let .activate(item, action):
             pasteCoordinator.perform(action, on: item)
@@ -191,8 +194,8 @@ final class AppCoordinator {
         preferences.isPaused = paused
     }
 
-    func clearHistory() async {
-        try? await store.clear(keepPinned: preferences.keepPinnedOnClear)
+    func clearHistory(keepPinned: Bool? = nil) async {
+        try? await store.clear(keepPinned: keepPinned ?? preferences.keepPinnedOnClear)
         await model.reload()
     }
 

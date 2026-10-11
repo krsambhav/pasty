@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import ImageIO
@@ -99,7 +100,7 @@ public enum ContentAnalyzer {
             return analyzeFiles(fileURLs, snapshot: snapshot, byteSize: byteSize)
         }
 
-        let text = snapshot.plainText
+        let text = snapshot.plainText ?? derivedText(from: first)
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let image = first.data(forAnyOf: PasteboardType.images)
 
@@ -109,8 +110,7 @@ public enum ContentAnalyzer {
         }
 
         guard let text, !trimmed.isEmpty else {
-            // Rich text without a plain-text fallback is rare but possible (e.g. RTF only).
-            return nil
+            return analyzeOther(snapshot, byteSize: byteSize)
         }
 
         if let url = detectURL(in: trimmed) {
@@ -175,6 +175,69 @@ public enum ContentAnalyzer {
             thumbnail: generateThumbnail ? ImageTools.thumbnail(from: data, maxPixelSize: thumbnailPixelSize) : nil,
             snapshot: snapshot
         )
+    }
+
+    /// Content with no text, link, image or file form — kept so it can be pasted back verbatim.
+    private static func analyzeOther(_ snapshot: PasteboardSnapshot, byteSize: Int) -> ClipDraft? {
+        let types = snapshot.allTypes.filter { !$0.hasPrefix("dyn.") }
+        guard !types.isEmpty else { return nil }
+        let title: String
+        let subtitle: String
+        if types.contains(PasteboardType.pdf) {
+            title = "PDF content"
+            subtitle = "PDF"
+        } else {
+            let primary = snapshot.items.first?.types.first { !$0.hasPrefix("dyn.") } ?? types.sorted()[0]
+            title = "Data (\(primary))"
+            subtitle = primary
+        }
+        var hasher = SHA256()
+        for item in snapshot.items {
+            for rep in item.representations.sorted(by: { $0.type < $1.type }) {
+                hasher.update(data: Data(rep.type.utf8))
+                hasher.update(data: rep.data)
+            }
+        }
+        return ClipDraft(
+            kind: .other,
+            title: String(title.prefix(titleLimit)),
+            subtitle: subtitle,
+            preview: "",
+            searchContent: types.sorted().joined(separator: " "),
+            contentHash: Data("o".utf8) + Data(hasher.finalize()),
+            byteSize: byteSize,
+            snapshot: snapshot
+        )
+    }
+
+    /// Plain text recovered from rich-text-only or HTML-only content.
+    static func derivedText(from item: PasteboardItemSnapshot) -> String? {
+        if let data = item.data(for: PasteboardType.rtfd),
+           let string = NSAttributedString(rtfd: data, documentAttributes: nil)?.string {
+            return string
+        }
+        if let data = item.data(for: PasteboardType.rtf),
+           let string = NSAttributedString(rtf: data, documentAttributes: nil)?.string {
+            return string
+        }
+        if let data = item.data(for: PasteboardType.html), let html = String(data: data, encoding: .utf8) {
+            return stripHTML(html)
+        }
+        return nil
+    }
+
+    /// Crude but safe tag stripping (HTML import via WebKit is main-thread-only and slow).
+    static func stripHTML(_ html: String) -> String {
+        var text = html
+        for pattern in ["(?is)<(script|style)[^>]*>.*?</\\1>", "(?i)<br\\s*/?>", "(?i)</(p|div|li|h[1-6]|tr)>", "<[^>]+>"] {
+            let replacement = pattern.contains("br") || pattern.contains("</(p") ? "\n" : ""
+            text = text.replacingOccurrences(of: pattern, with: replacement, options: .regularExpression)
+        }
+        let entities = ["&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'", "&apos;": "'"]
+        for (entity, value) in entities {
+            text = text.replacingOccurrences(of: entity, with: value)
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func analyzeFiles(_ urls: [URL], snapshot: PasteboardSnapshot, byteSize: Int) -> ClipDraft {

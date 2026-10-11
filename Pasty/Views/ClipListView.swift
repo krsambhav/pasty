@@ -9,32 +9,43 @@ struct ClipListView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical) {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 1) {
                     let query = SearchQuery(model.query)
                     let quickKeyIDs = model.showsQuickKeys ? model.items.prefix(9).map(\.id) : []
-                    ForEach(model.items) { item in
-                        ClipRow(
-                            item: item,
-                            isSelected: item.id == model.selectedID,
-                            query: query,
-                            now: model.now,
-                            quickKey: quickKeyIDs.firstIndex(of: item.id).map { $0 + 1 },
-                            thumbnails: model.thumbnails
-                        )
-                        .equatable()
-                        .id(item.id)
-                        .onTapGesture { send(.activate(item, model.primaryAction)) }
-                        .contextMenu { ClipContextMenu(item: item, primary: model.primaryAction, send: send) }
+                    ForEach(model.sections) { section in
+                        Section {
+                            ForEach(section.items) { item in
+                                ClipRow(
+                                    item: item,
+                                    isSelected: item.id == model.selectedID,
+                                    query: query,
+                                    now: model.now,
+                                    quickKey: quickKeyIDs.firstIndex(of: item.id).map { $0 + 1 },
+                                    thumbnails: model.thumbnails
+                                )
+                                .equatable()
+                                .id(item.id)
+                                .onTapGesture { send(.activate(item, model.primaryAction)) }
+                                .contextMenu { ClipContextMenu(item: item, send: send) }
+                            }
+                        } header: {
+                            SectionHeader(title: section.title)
+                        }
                     }
                 }
                 .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.bottom, 6)
             }
             .scrollIndicators(.hidden)
             .onChange(of: model.scrollTarget) { _, target in
                 guard let target else { return }
-                // A nil anchor scrolls the minimum distance needed — no jumpy recentering.
-                proxy.scrollTo(target.id, anchor: nil)
+                if target.id == model.items.first?.id, let header = model.sections.first?.id {
+                    // Reveal the first group's heading along with the first row.
+                    proxy.scrollTo(header, anchor: .top)
+                } else {
+                    // A nil anchor scrolls the minimum distance — no jumpy recentering.
+                    proxy.scrollTo(target.id, anchor: nil)
+                }
             }
         }
         .accessibilityElement(children: .contain)
@@ -42,9 +53,26 @@ struct ClipListView: View {
     }
 }
 
+/// cmdk's CommandGroup heading.
+private struct SectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.shadXSMedium)
+            .foregroundStyle(Theme.mutedForeground)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 10)
+            .padding(.bottom, 5)
+            .background(Theme.popover)
+            .id(title)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 struct ClipContextMenu: View {
     let item: ClipItem
-    let primary: PasteAction
     let send: (PanelCommand) -> Void
 
     var body: some View {
@@ -66,6 +94,7 @@ struct ClipContextMenu: View {
     }
 }
 
+/// cmdk's CommandItem: icon, label, and a right-aligned shortcut slot.
 struct ClipRow: View, Equatable {
     let item: ClipItem
     let isSelected: Bool
@@ -75,7 +104,6 @@ struct ClipRow: View, Equatable {
     let thumbnails: ThumbnailCache
 
     @State private var hovering = false
-    @Environment(\.colorSchemeContrast) private var contrast
 
     nonisolated static func == (lhs: ClipRow, rhs: ClipRow) -> Bool {
         lhs.item == rhs.item && lhs.isSelected == rhs.isSelected && lhs.query == rhs.query
@@ -92,8 +120,8 @@ struct ClipRow: View, Equatable {
         .padding(.horizontal, 8)
         .frame(height: Design.rowHeight)
         .background {
-            RoundedRectangle(cornerRadius: Design.rowCornerRadius, style: .continuous)
-                .fill(isSelected ? Design.selection(contrast) : hovering ? Design.hover(contrast) : .clear)
+            RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous)
+                .fill(isSelected ? Theme.accent : hovering ? Theme.accent.opacity(0.5) : .clear)
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
@@ -104,20 +132,21 @@ struct ClipRow: View, Equatable {
 
     @ViewBuilder
     private var trailing: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 7) {
             if item.isPinned {
                 Image(systemName: "pin.fill")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(35))
+                    .foregroundStyle(Theme.mutedForeground)
+                    .rotationEffect(.degrees(40))
+                    .accessibilityHidden(true)
             }
             if let quickKey {
-                KeyCap("⌘\(quickKey)")
+                Kbd("⌘\(quickKey)")
             } else {
                 Text(RelativeTime.short(item.updatedAt, now: now))
-                    .font(.system(size: 11))
+                    .font(Typeface.font(11.5))
                     .monospacedDigit()
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.mutedForeground)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -126,14 +155,13 @@ struct ClipRow: View, Equatable {
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 15, height: 15)
-                    .opacity(isSelected ? 1 : 0.85)
                     .help(item.sourceName ?? "")
             }
         }
     }
 }
 
-/// The leading 26pt glyph: a thumbnail, a file icon, a color swatch or a type symbol.
+/// The leading 24pt glyph: a thumbnail, a file icon, a color swatch or a type symbol.
 struct ClipIcon: View {
     let item: ClipItem
     let thumbnails: ThumbnailCache
@@ -143,51 +171,48 @@ struct ClipIcon: View {
         ZStack {
             switch item.kind {
             case .image:
-                RoundedRectangle(cornerRadius: 5, style: .continuous).fill(.primary.opacity(0.05))
+                RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous).fill(Theme.muted)
                 if let image = thumbnail ?? thumbnails.cached(item.id) {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: 26, height: 26)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous))
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.mutedForeground)
                 }
+                RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous)
+                    .strokeBorder(Theme.border, lineWidth: 0.5)
             case .file:
                 Image(nsImage: IconCache.shared.fileIcon(path: item.filePath ?? "/"))
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 24, height: 24)
+                    .frame(width: 22, height: 22)
             default:
-                if let color = ColorParser.parse(item.title), item.lineCount == 1 {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                if item.lineCount == 1, let color = ColorParser.parse(item.title) {
+                    RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous)
                         .fill(Color(nsColor: color))
-                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(.primary.opacity(0.12), lineWidth: 0.5))
-                        .frame(width: 20, height: 20)
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+                        .frame(width: 18, height: 18)
                 } else {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous).fill(.primary.opacity(0.05))
                     Image(systemName: symbol)
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Theme.mutedForeground)
                 }
             }
         }
-        .frame(width: 26, height: 26)
+        .frame(width: 24, height: 24)
+        .accessibilityHidden(true)
         .task(id: item.id) {
             guard item.kind == .image, thumbnail == nil else { return }
             thumbnail = await thumbnails.load(item.id)
         }
     }
 
-    private var symbol: String {
-        if item.isCode { return "chevron.left.forwardslash.chevron.right" }
-        switch item.kind {
-        case .text: return "text.alignleft"
-        case .richText: return "textformat"
-        case .url: return "link"
-        case .image: return "photo"
-        case .file: return "doc"
-        }
-    }
+    private var symbol: String { item.symbolName }
 }
 
 /// Single-line text with search matches emphasized.
@@ -198,8 +223,8 @@ struct HighlightedText: View {
 
     var body: some View {
         Text(attributed)
-            .font(monospaced ? .system(size: 12.5, design: .monospaced) : .system(size: 13))
-            .foregroundStyle(.primary)
+            .font(monospaced ? Typeface.mono(12.5) : .shadSM)
+            .foregroundStyle(Theme.foreground)
             .lineLimit(1)
             .truncationMode(.tail)
     }
@@ -210,8 +235,8 @@ struct HighlightedText: View {
         for range in SearchRanker.highlightRanges(in: text, query: query) {
             guard let lower = AttributedString.Index(range.lowerBound, within: string),
                   let upper = AttributedString.Index(range.upperBound, within: string) else { continue }
-            string[lower..<upper].foregroundColor = .accentColor
-            string[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
+            string[lower..<upper].backgroundColor = Theme.highlight
+            string[lower..<upper].font = monospaced ? Typeface.mono(12.5, .semibold) : .shadSMSemibold
         }
         return string
     }

@@ -20,6 +20,10 @@ final class PasteCoordinator {
     private let hud: HUDController
     weak var panel: PanelController?
     private var hasPromptedForAccessibility = false
+    /// Injectable for the smoke test, which exercises the permission-denied path.
+    var isAccessibilityTrusted: () -> Bool = { AccessibilityPermission.isGranted }
+    /// Whether to show the system permission prompt when trust is missing.
+    var promptsForAccessibility = true
     private var isPerforming = false
 
     init(store: ClipboardStore, monitor: ClipboardMonitor, model: PanelModel, hud: HUDController) {
@@ -69,7 +73,7 @@ final class PasteCoordinator {
             hud.show(.init(symbol: "checkmark.circle", title: "Copied", detail: nil), duration: 0.9)
             return true
         }
-        guard AccessibilityPermission.isGranted else {
+        guard isAccessibilityTrusted() else {
             explainMissingPermission()
             return false
         }
@@ -114,7 +118,7 @@ final class PasteCoordinator {
             ),
             duration: 3.5
         )
-        if !hasPromptedForAccessibility {
+        if !hasPromptedForAccessibility, promptsForAccessibility {
             hasPromptedForAccessibility = true
             AccessibilityPermission.requestWithPrompt()
         }

@@ -10,6 +10,8 @@ enum ClipDetailContent {
     case files([URL])
     case link(URL, display: String)
     case color(NSColor, String)
+    /// No visual form; lists the stored types.
+    case data([String])
     case unavailable
 }
 
@@ -37,7 +39,10 @@ final class PanelModel {
     var filter: ClipFilter = .all {
         didSet { if filter != oldValue { queryDidChange() } }
     }
+    /// Entries in display order. Selection and ⌘1–⌘9 operate on this flat list.
     private(set) var items: [ClipItem] = []
+    /// The same entries grouped for display ("Today", "Pinned", "Results"…).
+    private(set) var sections: [HistorySection] = []
     var selectedID: ClipItem.ID? {
         didSet { if selectedID != oldValue { loadDetail() } }
     }
@@ -147,11 +152,33 @@ final class PanelModel {
     }
 
     private func apply(_ newItems: [ClipItem], total: Int, resetSelection: Bool) {
+        // Remember where the selection was, so removing it (delete, unpin in Pinned) selects
+        // the neighbour that slid into its place rather than jumping back to the top.
+        let previousIndex = selectedIndex
         if newItems != items { items = newItems }
+        let grouped: [HistorySection]
+        if newItems.isEmpty {
+            grouped = []
+        } else if !SearchQuery(query).isEmpty {
+            grouped = [HistorySection(title: newItems.count == 1 ? "1 Result" : "\(newItems.count.formatted()) Results", items: newItems)]
+        } else if filter == .pinned {
+            grouped = [HistorySection(title: "Pinned", items: newItems)]
+        } else {
+            grouped = HistorySections.byDate(newItems, now: Date())
+        }
+        if grouped != sections { sections = grouped }
         totalCount = total
         hasLoaded = true
-        if resetSelection || selectedID == nil || !newItems.contains(where: { $0.id == selectedID }) {
+        if resetSelection || selectedID == nil {
             selectFirst()
+        } else if !newItems.contains(where: { $0.id == selectedID }) {
+            if let previousIndex, !newItems.isEmpty {
+                let item = newItems[min(previousIndex, newItems.count - 1)]
+                selectedID = item.id
+                requestScroll(to: item.id)
+            } else {
+                selectFirst()
+            }
         } else if detail?.itemID != selectedID {
             loadDetail()
         }
@@ -238,6 +265,12 @@ final class PanelModel {
         case .richText:
             if let rich = richText(from: first) { return .rich(rich) }
             return plainText(snapshot, item: item)
+        case .other:
+            if let pdf = first.data(for: PasteboardType.pdf), pdf.count <= maxRichPreviewBytes * 5,
+               let image = NSImage(data: pdf) {
+                return .image(image, pixelSize: CGSize(width: image.size.width * 2, height: image.size.height * 2))
+            }
+            return .data(snapshot.items.flatMap(\.types))
         case .text:
             if let color = ColorParser.parse(item.title), item.lineCount == 1 {
                 return .color(color, item.title)
@@ -266,6 +299,21 @@ final class PanelModel {
     }
 }
 
+extension ClipItem {
+    /// SF Symbol for the entry's type.
+    var symbolName: String {
+        if isCode { return "chevron.left.forwardslash.chevron.right" }
+        switch kind {
+        case .text: return "text.alignleft"
+        case .richText: return "textformat"
+        case .url: return "link"
+        case .image: return "photo"
+        case .file: return "doc"
+        case .other: return "shippingbox"
+        }
+    }
+}
+
 enum ClipAccessibility {
     static func label(for item: ClipItem, now: Date) -> String {
         var parts = [item.isCode ? "Code" : item.kind.displayName, item.title]
@@ -276,19 +324,10 @@ enum ClipAccessibility {
     }
 }
 
-/// Recognizes CSS-style hex colors so they can be previewed as swatches.
+/// Hex colors as `NSColor`, for swatches.
 enum ColorParser {
     static func parse(_ text: String) -> NSColor? {
-        var hex = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if hex.hasPrefix("#") { hex.removeFirst() } else { return nil }
-        guard [3, 6, 8].contains(hex.count), hex.allSatisfy(\.isHexDigit) else { return nil }
-        if hex.count == 3 { hex = hex.map { "\($0)\($0)" }.joined() }
-        guard let value = UInt64(hex, radix: 16) else { return nil }
-        let hasAlpha = hex.count == 8
-        let r = Double((value >> (hasAlpha ? 24 : 16)) & 0xFF) / 255
-        let g = Double((value >> (hasAlpha ? 16 : 8)) & 0xFF) / 255
-        let b = Double((value >> (hasAlpha ? 8 : 0)) & 0xFF) / 255
-        let a = hasAlpha ? Double(value & 0xFF) / 255 : 1
-        return NSColor(srgbRed: r, green: g, blue: b, alpha: a)
+        guard let color = HexColor(text) else { return nil }
+        return NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: color.alpha)
     }
 }

@@ -15,6 +15,13 @@ final class PastyPanel: NSPanel {
 @MainActor
 final class SearchFieldBridge {
     weak var field: NSTextField?
+
+    func focus() {
+        guard let field, let window = field.window else { return }
+        window.makeFirstResponder(field)
+        // Place the caret at the end rather than selecting everything.
+        field.currentEditor()?.selectedRange = NSRange(location: field.stringValue.utf16.count, length: 0)
+    }
 }
 
 @MainActor
@@ -92,10 +99,10 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        // The paste target. When Pasty itself is frontmost (e.g. Settings is open) there is no
+        // other app to paste into, and an older target must not be reused.
         let frontmost = NSWorkspace.shared.frontmostApplication
-        if frontmost?.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            previousApp = frontmost
-        }
+        previousApp = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? nil : frontmost
         onWillShow?()
         model.prepareForPresentation()
         position()
@@ -131,12 +138,21 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Centered horizontally, slightly above center, on the display under the pointer.
     private func position() {
         guard let screen = NSScreen.screenContainingMouse ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let size = Self.panelSize
-        let x = (visible.midX - size.width / 2).rounded()
-        let y = (visible.minY + visible.height * 0.56 - size.height / 2).rounded()
-        let clampedY = min(max(y, visible.minY + 20), visible.maxY - size.height - 20)
-        panel.setFrame(NSRect(x: x, y: clampedY, width: size.width, height: size.height), display: false)
+        panel.setFrame(Self.frame(in: screen.visibleFrame), display: false)
+    }
+
+    /// Where the panel goes within a screen's visible frame: centered horizontally, a little above
+    /// center, and always fully on screen — even on displays smaller than the panel's margins allow.
+    static func frame(in visible: NSRect, size: NSSize = panelSize) -> NSRect {
+        let margin: CGFloat = 12
+        var x = (visible.midX - size.width / 2).rounded()
+        var y = (visible.minY + visible.height * 0.56 - size.height / 2).rounded()
+        x = min(max(x, visible.minX + margin), visible.maxX - size.width - margin)
+        y = min(max(y, visible.minY + margin), visible.maxY - size.height - margin)
+        // A display narrower or shorter than the panel: pin to the top-left of the visible area.
+        if size.width + margin * 2 > visible.width { x = visible.minX }
+        if size.height + margin * 2 > visible.height { y = visible.maxY - size.height }
+        return NSRect(x: x, y: y, width: size.width, height: size.height)
     }
 
     func windowDidResignKey(_ notification: Notification) {

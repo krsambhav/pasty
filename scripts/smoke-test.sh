@@ -12,7 +12,7 @@ export PASTY_DATA_DIR="$(mktemp -d)"
 
 "$APP/Contents/MacOS/Pasty" --smoke-test "$OUT" > "$OUT/stdout.log" 2> "$OUT/stderr.log" &
 PID=$!
-for _ in $(seq 1 120); do
+for _ in $(seq 1 300); do
   if ! kill -0 "$PID" 2>/dev/null; then break; fi
   sleep 1
 done

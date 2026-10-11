@@ -6,15 +6,13 @@ struct PreviewPane: View {
     let model: PanelModel
     let send: (PanelCommand) -> Void
 
-    @Environment(\.colorSchemeContrast) private var contrast
-
     var body: some View {
         if let item = model.selectedItem {
             VStack(spacing: 0) {
+                PreviewHeader(item: item)
                 content(for: item)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Rectangle().fill(Design.hairline(contrast)).frame(height: 0.5)
-                    .padding(.horizontal, 16)
+                Separator()
                 MetadataView(item: item, now: model.now)
             }
         } else {
@@ -30,10 +28,8 @@ struct PreviewPane: View {
                 TextPreview(content: .plain(text, monospaced: isCode), itemID: item.id)
                     .overlay(alignment: .bottomTrailing) {
                         if truncated {
-                            Text("Preview truncated")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.tertiary)
-                                .padding(8)
+                            Badge(text: "Preview truncated", variant: .outline)
+                                .padding(10)
                         }
                     }
             case let .rich(attributed):
@@ -46,6 +42,8 @@ struct PreviewPane: View {
                 LinkPreview(url: url, display: display) { send(.open(item)) }
             case let .color(color, hex):
                 ColorPreview(color: color, hex: hex)
+            case let .data(types):
+                DataPreview(types: types)
             case .unavailable:
                 PreviewMessage(symbol: "exclamationmark.triangle", text: "Preview unavailable")
             }
@@ -56,16 +54,74 @@ struct PreviewPane: View {
     }
 }
 
+/// Type and status badges above the content.
+private struct PreviewHeader: View {
+    let item: ClipItem
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Badge(text: item.isCode ? "Code" : item.kind.displayName, variant: .secondary, symbol: symbol)
+            if item.isPinned {
+                Badge(text: "Pinned", variant: .outline, symbol: "pin.fill")
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+    }
+
+    private var symbol: String { item.symbolName }
+}
+
 private struct PreviewMessage: View {
     let symbol: String
     let text: String
 
     var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: symbol).font(.system(size: 20, weight: .light))
-            Text(text).font(.system(size: 12))
+        VStack(spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 16, weight: .medium))
+            Text(text).font(.shadSM)
         }
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(Theme.mutedForeground)
+    }
+}
+
+/// For content with no visual form: what it is, and that it still pastes faithfully.
+private struct DataPreview: View {
+    let types: [String]
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "shippingbox")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Theme.foreground)
+                .frame(width: 40, height: 40)
+                .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(Theme.muted))
+            Text("No preview available")
+                .font(Typeface.font(14, .semibold))
+                .foregroundStyle(Theme.foreground)
+            Text("Pasty keeps this content exactly as copied, so it pastes back into apps that understand it.")
+                .font(.shadXS)
+                .foregroundStyle(Theme.mutedForeground)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 300)
+            FlowBadges(types: Array(Set(types)).sorted().prefix(6).map { $0 })
+                .padding(.top, 4)
+        }
+        .padding(24)
+    }
+}
+
+private struct FlowBadges: View {
+    let types: [String]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(types, id: \.self) { type in
+                Badge(text: type, variant: .outline)
+            }
+        }
     }
 }
 
@@ -91,10 +147,11 @@ struct TextPreview: NSViewRepresentable {
             textView.isEditable = false
             textView.isSelectable = true
             textView.drawsBackground = false
-            textView.textContainerInset = NSSize(width: 12, height: 14)
+            textView.textContainerInset = NSSize(width: 12, height: 8)
             textView.isAutomaticLinkDetectionEnabled = false
             textView.isRichText = true
             textView.textContainer?.lineFragmentPadding = 4
+            textView.selectedTextAttributes = [.backgroundColor: Theme.NS.accent]
             textView.setAccessibilityLabel("Preview")
         }
         return scrollView
@@ -108,11 +165,11 @@ struct TextPreview: NSViewRepresentable {
         case let .plain(text, monospaced):
             let font: NSFont = monospaced
                 ? .monospacedSystemFont(ofSize: 12, weight: .regular)
-                : .systemFont(ofSize: 13)
+                : Typeface.nsFont(13.5)
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineSpacing = monospaced ? 2 : 3
+            paragraph.lineSpacing = monospaced ? 2.5 : 3.5
             textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: [
-                .font: font, .foregroundColor: NSColor.labelColor, .paragraphStyle: paragraph,
+                .font: font, .foregroundColor: Theme.NS.foreground, .paragraphStyle: paragraph,
             ]))
         case let .rich(attributed):
             textView.textStorage?.setAttributedString(Self.adaptingDefaultColors(attributed))
@@ -122,18 +179,19 @@ struct TextPreview: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    /// Rich text usually hard-codes black text; map default-looking colors to the dynamic label
-    /// color so it stays legible in Dark Mode, while keeping intentional colors intact.
+    /// Rich text usually hard-codes black text; map default-looking colors to the dynamic
+    /// foreground so it stays legible in Dark Mode, while keeping intentional colors intact.
     static func adaptingDefaultColors(_ source: NSAttributedString) -> NSAttributedString {
         let result = NSMutableAttributedString(attributedString: source)
         let full = NSRange(location: 0, length: result.length)
+        let foreground = Theme.NS.foreground
         result.enumerateAttribute(.foregroundColor, in: full) { value, range, _ in
             guard let color = (value as? NSColor)?.usingColorSpace(.sRGB) else {
-                result.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+                result.addAttribute(.foregroundColor, value: foreground, range: range)
                 return
             }
             if color.saturationComponent < 0.1, color.brightnessComponent < 0.2 {
-                result.addAttribute(.foregroundColor, value: NSColor.labelColor, range: range)
+                result.addAttribute(.foregroundColor, value: foreground, range: range)
             }
         }
         result.enumerateAttribute(.backgroundColor, in: full) { value, range, _ in
@@ -162,9 +220,9 @@ private struct ImagePreview: View {
             .aspectRatio(contentMode: .fit)
             // Never upscale small images beyond their natural size (in points).
             .frame(maxWidth: max(1, pixelSize.width / 2), maxHeight: max(1, pixelSize.height / 2))
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
-            .padding(18)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+            .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityLabel("Image, \(Int(pixelSize.width)) by \(Int(pixelSize.height)) pixels")
     }
@@ -177,46 +235,60 @@ private struct FilesPreview: View {
 
     var body: some View {
         if urls.count == 1, let url = urls.first {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Image(nsImage: IconCache.shared.fileIcon(path: url.path))
                     .resizable()
-                    .frame(width: 72, height: 72)
+                    .frame(width: 64, height: 64)
+                    .padding(.bottom, 4)
                 Text(url.lastPathComponent)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Typeface.font(15, .semibold))
+                    .foregroundStyle(Theme.foreground)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                 Text(url.deletingLastPathComponent().path(percentEncoded: false))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
+                    .font(.shadXS)
+                    .foregroundStyle(Theme.mutedForeground)
                     .multilineTextAlignment(.center)
                     .lineLimit(3)
                     .textSelection(.enabled)
                 if !FileManager.default.fileExists(atPath: url.path) {
-                    Label("No longer at this location", systemImage: "exclamationmark.triangle")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.orange)
+                    Badge(text: "No longer at this location", variant: .destructive, symbol: "exclamationmark.triangle.fill")
+                        .padding(.top, 6)
                 }
             }
             .padding(24)
         } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(urls, id: \.self) { url in
-                        HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(urls.enumerated()), id: \.offset) { index, url in
+                        if index > 0 { Separator() }
+                        HStack(spacing: 10) {
                             Image(nsImage: IconCache.shared.fileIcon(path: url.path))
                                 .resizable()
-                                .frame(width: 18, height: 18)
-                            Text(url.lastPathComponent)
-                                .font(.system(size: 12.5))
-                                .lineLimit(1)
+                                .frame(width: 20, height: 20)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(url.lastPathComponent)
+                                    .font(.shadSMMedium)
+                                    .foregroundStyle(Theme.foreground)
+                                    .lineLimit(1)
+                                Text(url.deletingLastPathComponent().path(percentEncoded: false))
+                                    .font(Typeface.font(11))
+                                    .foregroundStyle(Theme.mutedForeground)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
                             Spacer(minLength: 0)
                         }
-                        .padding(.vertical, 4)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .help(url.path)
                     }
                 }
+                .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
                 .padding(16)
             }
+            .scrollIndicators(.hidden)
         }
     }
 }
@@ -229,32 +301,33 @@ private struct LinkPreview: View {
     let open: () -> Void
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Image(systemName: "link")
-                .font(.system(size: 22, weight: .regular))
-                .foregroundStyle(.secondary)
-                .frame(width: 48, height: 48)
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.primary.opacity(0.05)))
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(Theme.foreground)
+                .frame(width: 40, height: 40)
+                .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(Theme.muted))
+                .padding(.bottom, 4)
             Text(display)
-                .font(.system(size: 13.5, weight: .medium))
+                .font(Typeface.font(14, .semibold))
+                .foregroundStyle(Theme.foreground)
                 .multilineTextAlignment(.center)
                 .lineLimit(4)
                 .textSelection(.enabled)
             if let host = url.host(percentEncoded: false) {
                 Text(host)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
+                    .font(.shadXS)
+                    .foregroundStyle(Theme.mutedForeground)
             }
             Button(action: open) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.right.square")
                     Text("Open in Browser")
-                    KeyCap("⌘O")
+                    Kbd("⌘O")
                 }
-                .font(.system(size: 11.5, weight: .medium))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
-            .padding(.top, 2)
+            .buttonStyle(.shad(.outline, size: .sm))
+            .padding(.top, 8)
         }
         .padding(24)
     }
@@ -268,21 +341,19 @@ private struct ColorPreview: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Theme.radiusLarge, style: .continuous)
                 .fill(Color(nsColor: color))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.primary.opacity(0.1), lineWidth: 0.5))
-                .frame(width: 120, height: 120)
-            Text(hex.uppercased())
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
-            Text(rgb)
-                .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(.secondary)
+                .overlay(RoundedRectangle(cornerRadius: Theme.radiusLarge, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+                .frame(width: 112, height: 112)
+                .shadow(color: .black.opacity(0.06), radius: 3, y: 1)
+            Text(hex.trimmingCharacters(in: .whitespaces).uppercased())
+                .font(Typeface.mono(13, .medium))
+                .foregroundStyle(Theme.foreground)
+            Text(HexColor(hex)?.cssDescription ?? "")
+                .font(Typeface.mono(11.5))
+                .foregroundStyle(Theme.mutedForeground)
+                .textSelection(.enabled)
         }
-    }
-
-    private var rgb: String {
-        let c = color.usingColorSpace(.sRGB) ?? color
-        return "rgb(\(Int((c.redComponent * 255).rounded())), \(Int((c.greenComponent * 255).rounded())), \(Int((c.blueComponent * 255).rounded())))"
     }
 }
 
@@ -293,7 +364,7 @@ private struct MetadataView: View {
     let now: Date
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 5) {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
             if let source = item.sourceName {
                 row("Source") {
                     HStack(spacing: 5) {
@@ -307,8 +378,8 @@ private struct MetadataView: View {
             row("Copied") { Text(copiedText) }
             row("Content") { Text(contentDescription) }
         }
-        .font(.system(size: 11.5))
-        .padding(.horizontal, 18)
+        .font(.shadXS)
+        .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -317,11 +388,12 @@ private struct MetadataView: View {
     private func row<Content: View>(_ label: String, @ViewBuilder value: () -> Content) -> some View {
         GridRow {
             Text(label)
-                .foregroundStyle(.tertiary)
-                .gridColumnAlignment(.trailing)
+                .foregroundStyle(Theme.mutedForeground)
+                .gridColumnAlignment(.leading)
             value()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.foreground)
                 .lineLimit(1)
+                .truncationMode(.middle)
         }
     }
 
@@ -334,15 +406,17 @@ private struct MetadataView: View {
         let size = ByteCountFormatter.string(fromByteCount: Int64(item.byteSize), countStyle: .file)
         switch item.kind {
         case .image:
-            return "Image · \(item.imageWidth) × \(item.imageHeight) · \(size)"
+            return "\(item.imageWidth) × \(item.imageHeight) px · \(size)"
         case .file:
-            return item.fileCount == 1 ? "File reference" : "\(item.fileCount) file references"
+            return item.fileCount == 1 ? "1 file" : "\(item.fileCount) files"
         case .url:
-            return "Link · \(item.characterCount.formatted()) characters"
+            return "\(item.characterCount.formatted()) characters"
+        case .other:
+            return "\(item.subtitle ?? "Data") · \(size)"
         case .text, .richText:
-            let kind = item.isCode ? "Code" : item.kind.displayName
             let lines = item.lineCount == 1 ? "1 line" : "\(item.lineCount.formatted()) lines"
-            return "\(kind) · \(item.characterCount.formatted()) characters · \(lines)"
+            let characters = item.characterCount == 1 ? "1 character" : "\(item.characterCount.formatted()) characters"
+            return "\(characters) · \(lines)"
         }
     }
 }

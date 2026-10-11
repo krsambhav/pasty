@@ -87,7 +87,7 @@ public struct PasteboardSnapshot: Sendable, Hashable {
 
     /// A copy containing only plain text — used for "Paste as Plain Text".
     public func plainTextOnly() -> PasteboardSnapshot? {
-        guard let text = plainText else { return nil }
+        guard let text = plainText ?? items.first.flatMap(ContentAnalyzer.derivedText) else { return nil }
         return PasteboardSnapshot(items: [
             PasteboardItemSnapshot(representations: [
                 PasteboardRepresentation(type: PasteboardType.string, data: Data(text.utf8)),

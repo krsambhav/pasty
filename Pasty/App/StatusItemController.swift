@@ -38,6 +38,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(quitItem)
         menu.delegate = self
+        menu.font = Typeface.nsFont(13.5)
         statusItem.menu = menu
         refresh()
     }

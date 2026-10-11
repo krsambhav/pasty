@@ -290,7 +290,10 @@ public actor ClipboardStore {
             }
             values.append(.text(expression.joined(separator: " AND ")))
         }
-        for token in search.tokens where !indexed.contains(token) {
+        // SQLite's LIKE only folds ASCII case, so short non-ASCII terms ("é", "日本") are matched
+        // in Swift with full Unicode case and diacritic folding instead.
+        let unicodeShort = search.tokens.filter { !indexed.contains($0) && !$0.allSatisfy(\.isASCII) }
+        for token in search.tokens where !indexed.contains(token) && !unicodeShort.contains(token) {
             clauses.append("(f.content LIKE ? ESCAPE '\\' OR f.meta LIKE ? ESCAPE '\\')")
             let pattern = "%" + SearchQuery.escapeLike(token) + "%"
             values.append(.text(pattern))
@@ -298,8 +301,9 @@ public actor ClipboardStore {
         }
         if filter == .pinned { clauses.append("i.pinned = 1") }
 
+        if clauses.isEmpty { clauses.append("1") }
         let sql = """
-        SELECT \(Self.itemColumns), substr(i.preview, 1, 600) FROM items_fts f JOIN items i ON i.id = f.rowid
+        SELECT \(Self.itemColumns), substr(i.preview, 1, 600), f.meta FROM items_fts f JOIN items i ON i.id = f.rowid
         WHERE \(clauses.joined(separator: " AND "))
         ORDER BY i.updated_at DESC LIMIT 1000
         """
@@ -312,6 +316,12 @@ public actor ClipboardStore {
         while try statement.step() {
             let item = Self.item(from: statement)
             let preview = statement.string(Self.itemColumnCount) ?? ""
+            if !unicodeShort.isEmpty {
+                let haystack = [item.title, preview, statement.string(Self.itemColumnCount + 1) ?? ""].joined(separator: "\n")
+                guard unicodeShort.allSatisfy({ haystack.range(of: $0, options: .caseInsensitive) != nil }) else {
+                    continue
+                }
+            }
             candidates.append(SearchRanker.Candidate(item: item, preview: preview))
         }
         return Array(SearchRanker.rank(candidates, for: search).prefix(limit))

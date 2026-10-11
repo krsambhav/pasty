@@ -15,6 +15,9 @@ final class HUDController {
     private var hosting: NSHostingView<HUDView>?
     private var hideTask: Task<Void, Never>?
 
+    var isShowing: Bool { panel?.isVisible == true }
+    var windowNumber: Int? { panel?.windowNumber }
+
     func show(_ message: HUDMessage, duration: TimeInterval = 2.2) {
         let panel = self.panel ?? makePanel()
         hosting?.rootView = HUDView(message: message)
@@ -87,35 +90,43 @@ final class HUDController {
     }
 }
 
+/// A Sonner-style toast: icon, title, optional description, on a bordered card.
 struct HUDView: View {
     let message: HUDMessage
 
     var body: some View {
         HStack(alignment: message.detail == nil ? .center : .top, spacing: 10) {
             Image(systemName: message.symbol)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 3) {
                 Text(message.title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.shadSMSemibold)
+                    .foregroundStyle(Theme.foreground)
                 if let detail = message.detail {
                     Text(detail)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
+                        .font(Typeface.font(12.5))
+                        .foregroundStyle(Theme.mutedForeground)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .frame(maxWidth: message.detail == nil ? nil : 340, alignment: .leading)
-        .background {
-            VisualEffectBackground(material: .hudWindow)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+        .padding(.vertical, 13)
+        .frame(width: message.detail == nil ? nil : 356, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).fill(Theme.popover))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
         .padding(1)
+    }
+
+    private var tint: Color {
+        switch message.symbol {
+        case let symbol where symbol.hasPrefix("checkmark"): Theme.success
+        case let symbol where symbol.hasPrefix("exclamationmark"): Theme.destructive
+        case "hand.raised": Theme.warning
+        default: Theme.foreground
+        }
     }
 }
 
@@ -124,24 +135,5 @@ extension NSScreen {
     static var screenContainingMouse: NSScreen? {
         let location = NSEvent.mouseLocation
         return screens.first { NSMouseInRect(location, $0.frame, false) }
-    }
-}
-
-/// `NSVisualEffectView` for SwiftUI backgrounds.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material
-    var blending: NSVisualEffectView.BlendingMode = .behindWindow
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = blending
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        view.blendingMode = blending
     }
 }

@@ -7,6 +7,9 @@ public enum ClipKind: Int, Sendable, Codable, CaseIterable {
     case url = 2
     case image = 3
     case file = 4
+    /// Content with no text, link, image or file form (e.g. a PDF or an app's private format).
+    /// It is still restored exactly when pasted back into the app that understands it.
+    case other = 5
 
     public var displayName: String {
         switch self {
@@ -15,6 +18,7 @@ public enum ClipKind: Int, Sendable, Codable, CaseIterable {
         case .url: "Link"
         case .image: "Image"
         case .file: "File"
+        case .other: "Data"
         }
     }
 }

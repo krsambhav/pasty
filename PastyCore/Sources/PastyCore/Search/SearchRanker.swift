@@ -100,7 +100,7 @@ public enum SearchRanker {
         var ranges: [Range<String.Index>] = []
         for token in query.tokens {
             var searchRange = text.startIndex..<text.endIndex
-            while let range = text.range(of: token, options: [.caseInsensitive, .diacriticInsensitive], range: searchRange) {
+            while let range = text.range(of: token, options: .caseInsensitive, range: searchRange) {
                 ranges.append(range)
                 guard range.upperBound < text.endIndex else { break }
                 searchRange = range.upperBound..<text.endIndex
