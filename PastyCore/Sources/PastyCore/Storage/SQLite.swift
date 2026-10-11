@@ -5,6 +5,9 @@ public struct SQLiteError: Error, CustomStringConvertible, Sendable {
     public let code: Int32
     public let message: String
 
+    /// The statement was stopped by a deadline (see `SQLiteConnection.setDeadline`).
+    public var isInterrupt: Bool { code == SQLITE_INTERRUPT }
+
     public var description: String { "SQLite error \(code): \(message)" }
 }
 
@@ -17,9 +20,10 @@ private var SQLITE_TRANSIENT: sqlite3_destructor_type { unsafeBitCast(-1, to: sq
 final class SQLiteConnection {
     private var handle: OpaquePointer?
     private var statements: [String: Statement] = [:]
+    private var deadline: Deadline?
 
-    init(path: String) throws {
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX
+    init(path: String, create: Bool = true) throws {
+        let flags = SQLITE_OPEN_READWRITE | (create ? SQLITE_OPEN_CREATE : 0) | SQLITE_OPEN_NOMUTEX
         var db: OpaquePointer?
         let result = sqlite3_open_v2(path, &db, flags, nil)
         guard result == SQLITE_OK, let db else {
@@ -76,6 +80,35 @@ final class SQLiteConnection {
             try? execute("ROLLBACK")
             throw error
         }
+    }
+
+    /// Read-only snapshot: every statement in `body` sees the same committed state.
+    func readTransaction<T>(_ body: () throws -> T) throws -> T {
+        try execute("BEGIN DEFERRED")
+        defer { try? execute("COMMIT") }
+        return try body()
+    }
+
+    /// Interrupts any statement still running `seconds` from now (it then fails with
+    /// `SQLITE_INTERRUPT`); `nil` removes the limit. Keeps one slow query from stalling the store.
+    func setDeadline(_ seconds: Double?) {
+        guard let seconds else {
+            sqlite3_progress_handler(handle, 0, nil, nil)
+            deadline = nil
+            return
+        }
+        let box = Deadline(end: DispatchTime.now().uptimeNanoseconds + UInt64(max(0, seconds) * 1_000_000_000))
+        deadline = box
+        sqlite3_progress_handler(handle, 1_000, { context in
+            guard let context else { return 0 }
+            let deadline = Unmanaged<Deadline>.fromOpaque(context).takeUnretainedValue()
+            return DispatchTime.now().uptimeNanoseconds > deadline.end ? 1 : 0
+        }, Unmanaged.passUnretained(box).toOpaque())
+    }
+
+    private final class Deadline {
+        let end: UInt64
+        init(end: UInt64) { self.end = end }
     }
 
     func pragma(_ name: String) throws -> String? {

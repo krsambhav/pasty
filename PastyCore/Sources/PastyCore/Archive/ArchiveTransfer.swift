@@ -111,7 +111,7 @@ public enum ArchiveTransfer {
         let staging = root.deletingLastPathComponent().appendingPathComponent(".\(root.lastPathComponent).partial-\(UUID().uuidString.prefix(8))")
         try fm.createDirectory(at: staging, withIntermediateDirectories: true)
         do {
-            let items = try await store.items(limit: 1_000_000)
+            let items = try await store.items(limit: -1) // no limit
             progress(Progress(completed: 0, total: items.count))
             var archived: [ClipBookArchive.Item] = []
             archived.reserveCapacity(items.count)

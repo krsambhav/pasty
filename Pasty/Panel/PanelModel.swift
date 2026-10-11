@@ -29,6 +29,65 @@ enum PanelCommand {
     case resumeMonitoring
 }
 
+/// The entries a list shows, in display order: either a search's results (held in memory) or
+/// the whole history, paged in from SQLite as rows are displayed, so a million entries cost no
+/// more to open or scroll than a hundred.
+struct ClipList: RandomAccessCollection, Equatable {
+    private enum Storage {
+        case loaded([ClipItem])
+        case paged(HistoryPager)
+    }
+
+    private let storage: Storage
+    /// Changes whenever the list is rebuilt; two lists are equal only if they're the same build.
+    let revision: Int
+
+    static var empty: ClipList { ClipList(storage: .loaded([]), revision: 0) }
+
+    private init(storage: Storage, revision: Int) {
+        self.storage = storage
+        self.revision = revision
+    }
+
+    init(_ items: [ClipItem], revision: Int) {
+        self.init(storage: .loaded(items), revision: revision)
+    }
+
+    init(pager: HistoryPager, revision: Int) {
+        self.init(storage: .paged(pager), revision: revision)
+    }
+
+    var startIndex: Int { 0 }
+    var endIndex: Int {
+        switch storage {
+        case let .loaded(items): items.count
+        case let .paged(pager): pager.count
+        }
+    }
+
+    /// Rows whose entry vanished between building the list and reading the row (it was
+    /// deleted meanwhile) read as an empty placeholder until the next rebuild.
+    subscript(position: Int) -> ClipItem {
+        item(at: position) ?? ClipItem(id: -1 - Int64(position), kind: .text, title: "", createdAt: .distantPast, updatedAt: .distantPast)
+    }
+
+    func item(at position: Int) -> ClipItem? {
+        switch storage {
+        case let .loaded(items): position >= 0 && position < items.count ? items[position] : nil
+        case let .paged(pager): pager.item(at: position)
+        }
+    }
+
+    func index(of id: ClipItem.ID) -> Int? {
+        switch storage {
+        case let .loaded(items): items.firstIndex { $0.id == id }
+        case let .paged(pager): pager.index(of: id)
+        }
+    }
+
+    static func == (lhs: ClipList, rhs: ClipList) -> Bool { lhs.revision == rhs.revision }
+}
+
 /// State for the floating panel. Lives for the app's lifetime so opening is instant.
 @MainActor
 @Observable
@@ -40,12 +99,15 @@ final class PanelModel {
         didSet { if filter != oldValue { queryDidChange() } }
     }
     /// Entries in display order. Selection and ⌘1–⌘9 operate on this flat list.
-    private(set) var items: [ClipItem] = []
-    /// The same entries grouped for display ("Today", "Pinned", "Results"…).
-    private(set) var sections: [HistorySection] = []
-    var selectedID: ClipItem.ID? {
+    private(set) var items = ClipList.empty
+    /// How the entries are grouped for display ("Today", "Pinned", "Results"…).
+    private(set) var sections: [ListSection] = []
+    private(set) var selectedID: ClipItem.ID? {
         didSet { if selectedID != oldValue { loadDetail() } }
     }
+    /// The selected entry and its position in `items`.
+    private(set) var selectedItem: ClipItem?
+    private(set) var selectedIndex: Int?
     private(set) var detail: ClipDetail?
     /// Total entries in history, to tell "nothing yet" apart from "no matches".
     private(set) var totalCount = 0
@@ -61,13 +123,15 @@ final class PanelModel {
     @ObservationIgnored private(set) var lastQueryDuration: Duration = .zero
 
     struct ScrollTarget: Equatable {
-        let id: ClipItem.ID
+        let index: Int
         let token: Int
     }
 
     @ObservationIgnored let store: ClipboardStore
     @ObservationIgnored let thumbnails: ThumbnailCache
     @ObservationIgnored private let preferences: Preferences
+    /// Main-thread connection the list pages rows in through.
+    @ObservationIgnored private var reader: HistoryReader?
     @ObservationIgnored private var queryTask: Task<Void, Never>?
     @ObservationIgnored private var detailTask: Task<Void, Never>?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
@@ -82,16 +146,6 @@ final class PanelModel {
         self.preferences = preferences
         thumbnails = ThumbnailCache(store: store)
         isPaused = preferences.isPaused
-    }
-
-    var selectedItem: ClipItem? {
-        guard let selectedID else { return nil }
-        return items.first { $0.id == selectedID }
-    }
-
-    var selectedIndex: Int? {
-        guard let selectedID else { return nil }
-        return items.firstIndex { $0.id == selectedID }
     }
 
     var primaryAction: PasteAction {
@@ -145,84 +199,107 @@ final class PanelModel {
         let filter = filter
         let started = ContinuousClock.now
         do {
-            // An empty query lists the whole history (up to 50,000 entries); a search returns the
-            // top 500 matches.
-            let newItems = SearchQuery(query).isEmpty
-                ? try await store.items(filter: filter, limit: 100_000)
-                : try await store.search(query, filter: filter)
-            let newTotal = try await store.count()
+            let newList: ClipList
+            let newSections: [ListSection]
+            let newTotal: Int
+            if SearchQuery(query).isEmpty {
+                // The whole history: only its shape and first page are read here; the list
+                // pages the rest in as it scrolls.
+                let layout = try await store.layout(filter: filter, now: Date())
+                if filter == .all {
+                    newTotal = layout.total
+                } else {
+                    newTotal = try await store.count()
+                }
+                guard current == generation else { return }
+                if reader == nil { reader = try store.makeReader() }
+                guard let reader else { return }
+                newList = ClipList(pager: HistoryPager(reader: reader, filter: filter, layout: layout), revision: current)
+                newSections = layout.sections
+            } else {
+                let results = try await store.search(query, filter: filter)
+                newTotal = try await store.count()
+                newList = ClipList(results, revision: current)
+                newSections = results.isEmpty ? [] : [
+                    ListSection(title: results.count == 1 ? "1 Result" : "\(results.count.formatted()) Results", start: 0, count: results.count),
+                ]
+            }
             // A newer query superseded this one while it ran.
             guard current == generation else { return }
             lastQueryDuration = ContinuousClock.now - started
-            apply(newItems, total: newTotal, resetSelection: resetSelection)
+            apply(newList, sections: newSections, total: newTotal, resetSelection: resetSelection)
         } catch {
             NSLog("Pasty: query failed: \(error)")
         }
     }
 
-    private func apply(_ newItems: [ClipItem], total: Int, resetSelection: Bool) {
+    private func apply(_ newItems: ClipList, sections newSections: [ListSection], total: Int, resetSelection: Bool) {
         // Remember where the selection was, so removing it (delete, unpin in Pinned) selects
         // the neighbour that slid into its place rather than jumping back to the top.
         let previousIndex = selectedIndex
-        if newItems != items { items = newItems }
-        let grouped: [HistorySection]
-        if newItems.isEmpty {
-            grouped = []
-        } else if !SearchQuery(query).isEmpty {
-            grouped = [HistorySection(title: newItems.count == 1 ? "1 Result" : "\(newItems.count.formatted()) Results", items: newItems)]
-        } else if filter == .pinned {
-            grouped = [HistorySection(title: "Pinned", items: newItems)]
-        } else {
-            grouped = HistorySections.byDate(newItems, now: Date())
-        }
-        if grouped != sections { sections = grouped }
+        items = newItems
+        if newSections != sections { sections = newSections }
         totalCount = total
         hasLoaded = true
-        let keepUserSelection = selectionMovedSinceQueryChange && newItems.contains { $0.id == selectedID }
+        let currentIndex = selectedID.flatMap { newItems.index(of: $0) }
+        let keepUserSelection = selectionMovedSinceQueryChange && currentIndex != nil
         if (resetSelection && !keepUserSelection) || selectedID == nil {
             selectFirst()
-        } else if !newItems.contains(where: { $0.id == selectedID }) {
-            if let previousIndex, !newItems.isEmpty {
-                let item = newItems[min(previousIndex, newItems.count - 1)]
-                selectedID = item.id
-                requestScroll(to: item.id)
-            } else {
-                selectFirst()
-            }
-        } else if detail?.itemID != selectedID {
-            loadDetail()
+        } else if let currentIndex {
+            // Same entry, possibly moved or changed (e.g. pinned).
+            setSelection(index: currentIndex)
+            if detail?.itemID != selectedID { loadDetail() }
+        } else if let previousIndex, !newItems.isEmpty {
+            setSelection(index: min(previousIndex, newItems.count - 1))
+            requestScroll()
+        } else {
+            selectFirst()
         }
     }
 
     // MARK: Selection
 
     func selectFirst() {
-        selectedID = items.first?.id
-        if let id = selectedID { requestScroll(to: id) }
+        setSelection(index: items.isEmpty ? nil : 0)
+        requestScroll()
     }
 
     func moveSelection(by offset: Int) {
         guard !items.isEmpty else { return }
         let current = selectedIndex ?? -1
-        let next = min(max(current + offset, 0), items.count - 1)
-        select(items[next])
+        select(at: min(max(current + offset, 0), items.count - 1))
     }
 
     func moveToEdge(top: Bool) {
-        guard let item = top ? items.first : items.last else { return }
-        select(item)
+        guard !items.isEmpty else { return }
+        select(at: top ? 0 : items.count - 1)
     }
 
-    func select(_ item: ClipItem) {
+    /// Selects the entry at `index` (by the user: keyboard, click).
+    func select(at index: Int) {
+        guard let item = items.item(at: index) else { return }
         selectionMovedSinceQueryChange = true
-        selectedID = item.id
-        requestScroll(to: item.id)
+        setSelection(index: index)
+        requestScroll()
         announce(item)
     }
 
-    private func requestScroll(to id: ClipItem.ID) {
+    func select(_ item: ClipItem) {
+        guard let index = items.index(of: item.id) else { return }
+        select(at: index)
+    }
+
+    private func setSelection(index: Int?) {
+        let item = index.flatMap { items.item(at: $0) }
+        selectedIndex = item == nil ? nil : index
+        selectedItem = item
+        selectedID = item?.id
+    }
+
+    private func requestScroll() {
+        guard let selectedIndex else { return }
         scrollToken += 1
-        scrollTarget = ScrollTarget(id: id, token: scrollToken)
+        scrollTarget = ScrollTarget(index: selectedIndex, token: scrollToken)
     }
 
     /// VoiceOver users keep focus in the search field, so selection changes are announced.

@@ -740,12 +740,9 @@ final class SmokeTest {
         }
         let target = model.items[2]
         // Table rows are each section's heading followed by its items.
-        var row = 0
         var found: Int?
-        for section in model.sections {
-            row += 1
-            if let index = section.items.firstIndex(where: { $0.id == target.id }) { found = row + index; break }
-            row += section.items.count
+        for (number, section) in model.sections.enumerated() where section.range.contains(2) {
+            found = 2 + number + 1
         }
         guard let row = found else { return check("row for click found", false) }
         table.scrollRowToVisible(row)
@@ -801,7 +798,51 @@ final class SmokeTest {
             draft.date = Date().addingTimeInterval(-Double(index) * 97)
             _ = try? await store.insert(draft, duplicates: .keepAll, maxHistory: 50_000)
         }
-        await model.reload()
+
+        // Then a huge history: a million more entries (older than the ones above).
+        let bulk = Int(ProcessInfo.processInfo.environment["PASTY_SMOKE_HISTORY"] ?? "") ?? 1_000_000
+        coordinator.preferences.maxHistory = Preferences.maxHistoryLimit
+        let phrases = [
+            "Quarterly report draft for the design review",
+            "SELECT id, name FROM customers WHERE active = 1",
+            "https://github.com/krsambhav/pasty/releases",
+            "Remember to update the onboarding copy",
+            "func render(_ frame: CGRect) -> Image",
+        ]
+        let seedStart = ContinuousClock.now
+        let oldest = Date().addingTimeInterval(-86_400 * 30)
+        var batch: [ImportedClip] = []
+        batch.reserveCapacity(5_000)
+        for index in 0..<bulk {
+            var draft = ContentAnalyzer.text("\(phrases[index % phrases.count]) · bulk \(index)", date: oldest.addingTimeInterval(-Double(index) * 7))
+            draft.source = SourceApp(bundleID: sources[index % sources.count].0, name: sources[index % sources.count].1)
+            batch.append(ImportedClip(draft: draft, firstCopiedAt: draft.date, copyCount: 1, pinned: index % 50_000 == 0))
+            if batch.count == 5_000 || index == bulk - 1 {
+                _ = try? await store.importClips(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+        results.scroll["history entries"] = Double((try? await store.count()) ?? 0)
+        results.scroll["seed seconds"] = ((ContinuousClock.now - seedStart).milliseconds / 10).rounded() / 100
+
+        var reloads: [Double] = []
+        for _ in 0..<5 {
+            let start = ContinuousClock.now
+            await model.reload()
+            reloads.append((ContinuousClock.now - start).milliseconds)
+        }
+        reloads.sort()
+        results.scroll["list reload median ms"] = (reloads[2] * 100).rounded() / 100
+        check("a huge history loads quickly (reload < 250 ms)", reloads[2] < 250, "\(reloads[2]) ms")
+
+        for (label, query) in [("common word", "report"), ("rare entry", "bulk 987654"), ("two letters", "zq")] {
+            let start = ContinuousClock.now
+            let found = (try? await store.search(query))?.count ?? 0
+            let elapsed = (ContinuousClock.now - start).milliseconds
+            results.scroll["search \(label) ms"] = (elapsed * 100).rounded() / 100
+            check("search over a huge history stays interactive (\(label))", elapsed < 600, "\(elapsed) ms, \(found) results")
+        }
+
         panel.show()
         await settle()
 
@@ -811,19 +852,26 @@ final class SmokeTest {
         let clip = scrollView.contentView
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height)
         results.scroll["rows"] = Double(model.items.count)
-        check("the whole history is listed, not just the newest 500", model.items.count > 1_500, "\(model.items.count) items")
+        check("the whole history is listed, not just the newest 500", model.items.count > 1_500 + bulk / 2, "\(model.items.count) items")
+        check("the list has no visible scroller", !scrollView.hasVerticalScroller)
         results.scroll["document height pt"] = (maxY).rounded()
 
         var samples: [Double] = []
         var y: CGFloat = 0
-        // Scroll down 400 steps (or to the end), then back up — like a long trackpad fling.
+        // A long fling down from the top, then a jump half a million rows deep and another fling
+        // there — rows deep in history are paged in as they appear.
         for step in 0..<800 {
-            y = step < 400 ? min(maxY, y + 40) : max(0, y - 40)
+            if step == 400 {
+                y = (maxY / 2).rounded()
+            } else {
+                y = min(maxY, y + 40)
+            }
             let start = DispatchTime.now().uptimeNanoseconds
             clip.scroll(to: NSPoint(x: 0, y: y))
             scrollView.reflectScrolledClipView(clip)
             panel.panel.displayIfNeeded()
-            samples.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+            if step == 400 { results.scroll["jump to middle ms"] = (elapsed * 100).rounded() / 100 } else { samples.append(elapsed) }
             if step % 20 == 0 { await nextTurn() } // let async thumbnail loads land, like real frames
         }
         samples.sort()

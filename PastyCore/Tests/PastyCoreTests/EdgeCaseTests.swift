@@ -514,7 +514,7 @@ final class PreferencesEdgeCaseTests: XCTestCase {
         defaults.set(-5, forKey: "maxHistory")
         XCTAssertEqual(Preferences(defaults: defaults).maxHistory, 10)
         defaults.set(10_000_000, forKey: "maxHistory")
-        XCTAssertEqual(Preferences(defaults: defaults).maxHistory, 50_000)
+        XCTAssertEqual(Preferences(defaults: defaults).maxHistory, 1_000_000)
     }
 
     func testEmptyExclusionListPersists() {

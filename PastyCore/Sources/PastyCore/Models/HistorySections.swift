@@ -40,3 +40,42 @@ public enum HistorySections {
         return sections
     }
 }
+
+/// A titled run of rows in a list whose entries are loaded on demand: entries
+/// `start ..< start + count` (in display order) belong to this section.
+public struct ListSection: Sendable, Equatable {
+    public var title: String
+    public var start: Int
+    public var count: Int
+    public var range: Range<Int> { start..<(start + count) }
+
+    public init(title: String, start: Int, count: Int) {
+        self.title = title
+        self.start = start
+        self.count = count
+    }
+}
+
+extension HistorySections {
+    /// Section titles with the earliest `updatedAt` each one covers, newest first. "Earlier" has
+    /// no lower bound.
+    public static func boundaries(now: Date = Date(), calendar: Calendar = .current) -> [(title: String, since: Date?)] {
+        let today = calendar.startOfDay(for: now)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        let weekAgo = calendar.date(byAdding: .day, value: -7, to: today) ?? today
+        return [("Today", today), ("Yesterday", yesterday), ("Previous 7 Days", weekAgo), ("Earlier", nil)]
+    }
+
+    /// Lays out sections from how many entries are at least as new as each boundary
+    /// (`cumulative[i]` for `boundaries()[i]`; the last is the total). Empty sections are omitted.
+    public static func sections(cumulativeCounts cumulative: [Int], titles: [String]) -> [ListSection] {
+        var sections: [ListSection] = []
+        var start = 0
+        for (title, upTo) in zip(titles, cumulative) {
+            let count = max(0, upTo - start)
+            if count > 0 { sections.append(ListSection(title: title, start: start, count: count)) }
+            start = max(start, upTo)
+        }
+        return sections
+    }
+}

@@ -26,8 +26,9 @@ struct ClipListView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         // Reading these registers observation, so SwiftUI calls this when any of them change.
         context.coordinator.update(
+            items: model.items,
             sections: model.sections,
-            selectedID: model.selectedID,
+            selectedIndex: model.selectedIndex,
             query: model.query,
             now: model.now,
             showsQuickKeys: model.showsQuickKeys,
@@ -42,11 +43,13 @@ struct ClipListView: NSViewRepresentable {
 final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     enum Row: Equatable {
         case header(String)
-        case item(ClipItem)
+        /// An entry, by its index in the model's list.
+        case item(Int)
     }
 
-    static let itemHeight: CGFloat = 38
-    static let headerHeight: CGFloat = 30
+    /// Every row is the same height, so the table never asks per-row heights — with a million
+    /// rows that matters — and section headings sit in an item-sized row.
+    static let rowHeight: CGFloat = 38
     static let horizontalInset: CGFloat = 6
 
     let scrollView = NSScrollView()
@@ -54,10 +57,10 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
     private let model: PanelModel
     private let send: (PanelCommand) -> Void
 
-    private var sections: [HistorySection] = []
-    private var rows: [Row] = []
-    private var rowIndexByID: [ClipItem.ID: Int] = [:]
-    private var selectedID: ClipItem.ID?
+    private var items = ClipList.empty
+    private var sections: [ListSection] = []
+    private var rowCount = 0
+    private var selectedIndex: Int?
     private var query = SearchQuery("")
     private var now = Date()
     private var quickKeyIDs: [ClipItem.ID] = []
@@ -65,7 +68,7 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
     fileprivate var hoveredRow: Int? {
         didSet {
             guard hoveredRow != oldValue else { return }
-            for row in [oldValue, hoveredRow].compactMap({ $0 }) where row < rows.count {
+            for row in [oldValue, hoveredRow].compactMap({ $0 }) where row < rowCount {
                 (tableView.rowView(atRow: row, makeIfNecessary: false) as? ClipRowView)?.isHovered = row == hoveredRow
             }
         }
@@ -85,6 +88,7 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
         tableView.intercellSpacing = NSSize(width: 0, height: 1)
         tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         tableView.usesAutomaticRowHeights = false
+        tableView.rowHeight = Self.rowHeight
         tableView.style = .plain
         tableView.focusRingType = .none
         tableView.dataSource = self
@@ -97,43 +101,38 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
         scrollView.documentView = tableView
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        scrollView.scrollerStyle = .overlay
+        // No visible scroller: the list still scrolls with the trackpad, mouse wheel and keyboard.
+        scrollView.hasVerticalScroller = false
         scrollView.hasHorizontalScroller = false
+        scrollView.verticalScrollElasticity = .allowed
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
     }
 
     // MARK: Updates from the model
 
-    func update(sections newSections: [HistorySection], selectedID newSelection: ClipItem.ID?, query newQuery: String,
+    func update(items newItems: ClipList, sections newSections: [ListSection], selectedIndex newSelection: Int?, query newQuery: String,
                 now newNow: Date, showsQuickKeys: Bool, scrollTarget: PanelModel.ScrollTarget?) {
         let parsedQuery = SearchQuery(newQuery)
-        let newQuickKeys = showsQuickKeys ? Array(newSections.lazy.flatMap(\.items).prefix(9).map(\.id)) : []
 
-        if newSections != sections {
+        if newItems != items || newSections != sections {
+            items = newItems
             sections = newSections
-            rows = newSections.flatMap { section in [Row.header(section.title)] + section.items.map(Row.item) }
-            var index: [ClipItem.ID: Int] = [:]
-            index.reserveCapacity(rows.count)
-            for (offset, row) in rows.enumerated() {
-                if case let .item(item) = row { index[item.id] = offset }
-            }
-            rowIndexByID = index
-            selectedID = newSelection
+            rowCount = newSections.reduce(0) { $0 + 1 + $1.count }
+            selectedIndex = newSelection
             query = parsedQuery
             now = newNow
-            quickKeyIDs = newQuickKeys
+            quickKeyIDs = showsQuickKeys ? Self.quickKeys(in: newItems) : []
             hoveredRow = nil
             tableView.reloadData()
         } else {
+            let newQuickKeys = showsQuickKeys ? Self.quickKeys(in: newItems) : []
             var changedRows = IndexSet()
-            if newSelection != selectedID {
-                for id in [selectedID, newSelection].compactMap({ $0 }) {
-                    if let row = rowIndexByID[id] { changedRows.insert(row) }
+            if newSelection != selectedIndex {
+                for index in [selectedIndex, newSelection].compactMap({ $0 }) {
+                    if let row = row(forItem: index) { changedRows.insert(row) }
                 }
-                selectedID = newSelection
+                selectedIndex = newSelection
             }
             if parsedQuery != query || newNow != now || newQuickKeys != quickKeyIDs {
                 query = parsedQuery
@@ -146,8 +145,33 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
         if let scrollTarget, scrollTarget.token != lastScrollToken {
             lastScrollToken = scrollTarget.token
-            scroll(to: scrollTarget.id)
+            scroll(toItem: scrollTarget.index)
         }
+    }
+
+    private static func quickKeys(in items: ClipList) -> [ClipItem.ID] {
+        (0..<min(9, items.count)).map { items[$0].id }
+    }
+
+    // MARK: Rows
+
+    /// What a table row shows: each section is a heading row followed by its entries.
+    func content(ofRow row: Int) -> Row? {
+        var first = 0
+        for section in sections {
+            if row == first { return .header(section.title) }
+            if row <= first + section.count { return .item(section.start + row - first - 1) }
+            first += 1 + section.count
+        }
+        return nil
+    }
+
+    /// The table row showing entry `index`.
+    func row(forItem index: Int) -> Int? {
+        for (number, section) in sections.enumerated() where section.range.contains(index) {
+            return index + number + 1
+        }
+        return nil
     }
 
     private var visibleRows: IndexSet {
@@ -158,15 +182,15 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     /// Reconfigures a visible row in place (no view churn).
     private func refresh(row: Int) {
-        guard row < rows.count, case let .item(item) = rows[row] else { return }
-        (tableView.rowView(atRow: row, makeIfNecessary: false) as? ClipRowView)?.isChosen = item.id == selectedID
+        guard case let .item(index)? = content(ofRow: row) else { return }
+        (tableView.rowView(atRow: row, makeIfNecessary: false) as? ClipRowView)?.isChosen = index == selectedIndex
         if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ClipCellView {
-            configure(cell, with: item)
+            configure(cell, with: items[index])
         }
     }
 
-    private func scroll(to id: ClipItem.ID) {
-        guard let row = rowIndexByID[id] else { return }
+    private func scroll(toItem index: Int) {
+        guard let row = row(forItem: index) else { return }
         if row <= 1 {
             // The first item: reveal its section heading too.
             tableView.scroll(.zero)
@@ -177,12 +201,7 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     // MARK: Data source & delegate
 
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        if case .header = rows[row] { return Self.headerHeight }
-        return Self.itemHeight
-    }
+    func numberOfRows(in tableView: NSTableView) -> Int { rowCount }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let identifier = NSUserInterfaceItemIdentifier("ClipRowView")
@@ -191,9 +210,9 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
             view.identifier = identifier
             return view
         }()
-        if case let .item(item) = rows[row] {
+        if case let .item(index)? = content(ofRow: row) {
             view.isSelectable = true
-            view.isChosen = item.id == selectedID
+            view.isChosen = index == selectedIndex
             view.isHovered = row == hoveredRow
         } else {
             view.isSelectable = false
@@ -204,8 +223,8 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        switch rows[row] {
-        case let .header(title):
+        switch content(ofRow: row) {
+        case let .header(title)?:
             let identifier = NSUserInterfaceItemIdentifier("ClipHeader")
             let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ClipHeaderView ?? {
                 let cell = ClipHeaderView()
@@ -214,15 +233,17 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
             }()
             cell.title = title
             return cell
-        case let .item(item):
+        case let .item(index)?:
             let identifier = NSUserInterfaceItemIdentifier("ClipCell")
             let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? ClipCellView ?? {
                 let cell = ClipCellView()
                 cell.identifier = identifier
                 return cell
             }()
-            configure(cell, with: item)
+            configure(cell, with: items[index])
             return cell
+        case nil:
+            return nil
         }
     }
 
@@ -233,15 +254,19 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     // MARK: Mouse
 
+    fileprivate func itemIndex(at row: Int) -> Int? {
+        guard row >= 0, row < rowCount, case let .item(index)? = content(ofRow: row) else { return nil }
+        return index
+    }
+
     fileprivate func item(at row: Int) -> ClipItem? {
-        guard row >= 0, row < rows.count, case let .item(item) = rows[row] else { return nil }
-        return item
+        itemIndex(at: row).flatMap { items.item(at: $0) }
     }
 
     /// Single click: select, so the preview pane shows the item in full.
     fileprivate func clicked(row: Int) {
-        guard let item = item(at: row) else { return }
-        model.select(item)
+        guard let index = itemIndex(at: row) else { return }
+        model.select(at: index)
     }
 
     /// Double click: use it (paste, or copy — per Settings).
@@ -254,8 +279,8 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let item = item(at: tableView.clickedRow) else { return }
-        model.select(item)
+        guard let index = itemIndex(at: tableView.clickedRow), let item = items.item(at: index) else { return }
+        model.select(at: index)
         func add(_ title: String, _ command: PanelCommand) {
             let entry = NSMenuItem(title: title, action: #selector(performMenuCommand(_:)), keyEquivalent: "")
             entry.target = self

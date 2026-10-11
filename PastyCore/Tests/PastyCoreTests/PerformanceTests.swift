@@ -150,3 +150,111 @@ final class LargeEntryPerformanceTests: XCTestCase {
         XCTAssertLessThan(ms(start), 200)
     }
 }
+
+/// A million-entry history ("10 lakh"): opening the list, paging deep into it, searching,
+/// recording a copy and trimming must all stay interactive.
+final class MillionEntryPerformanceTests: XCTestCase {
+    static let words = "report draft design review select customers active update onboarding render frame image release notes meeting budget invoice travel recipe".split(separator: " ").map(String.init)
+
+    private func ms(_ start: DispatchTime) -> Double {
+        Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
+    }
+
+    func testMillionEntryHistory() async throws {
+        let count = Int(ProcessInfo.processInfo.environment["PASTY_BENCH_ENTRIES"] ?? "") ?? 1_000_000
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("PastyMillion-\(UUID().uuidString)")
+            .appendingPathComponent("history.sqlite")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let store = try ClipboardStore(url: url)
+
+        var start = DispatchTime.now()
+        var batch: [ImportedClip] = []
+        batch.reserveCapacity(10_000)
+        let base = Date().addingTimeInterval(-Double(count) * 5)
+        for index in 0..<count {
+            let words = (0..<(4 + index % 12)).map { Self.words[(index &* 31 &+ $0 &* 7) % Self.words.count] }
+            let date = base.addingTimeInterval(Double(index) * 5)
+            batch.append(ImportedClip(draft: .text("\(words.joined(separator: " ")) #\(index)", date: date),
+                                      firstCopiedAt: date, copyCount: 1, pinned: index % 10_000 == 0))
+            if batch.count == 10_000 {
+                _ = try await store.importClips(batch)
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+        if !batch.isEmpty { _ = try await store.importClips(batch) }
+        print("[benchmark] seed \(count) entries: \(Int(ms(start))) ms")
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        print("[benchmark] database size: \(size / 1_000_000) MB")
+
+        // Opening the list: layout + first page.
+        var layoutSamples: [Double] = []
+        var layout = try await store.layout()
+        for _ in 0..<5 {
+            start = DispatchTime.now()
+            layout = try await store.layout()
+            layoutSamples.append(ms(start))
+        }
+        layoutSamples.sort()
+        print("[benchmark] list layout (\(layout.total) entries): median \(String(format: "%.2f", layoutSamples[2])) ms")
+        XCTAssertEqual(layout.total, count)
+        XCTAssertLessThan(layoutSamples[2], 250)
+
+        // Scrolling: consecutive pages by key, deep in the list.
+        let reader = try store.makeReader()
+        let pager = HistoryPager(reader: reader, filter: .all, layout: layout)
+        start = DispatchTime.now()
+        _ = pager.item(at: count / 2) // a jump: fetched by offset
+        let jump = ms(start)
+        var worstPage = 0.0
+        for index in stride(from: count / 2, to: count / 2 + 20 * HistoryPager.pageSize, by: HistoryPager.pageSize) {
+            let pageStart = DispatchTime.now()
+            XCTAssertNotNil(pager.item(at: index))
+            worstPage = max(worstPage, ms(pageStart))
+        }
+        start = DispatchTime.now()
+        let freshPager = HistoryPager(reader: reader, filter: .all, layout: layout)
+        _ = freshPager.item(at: count - 1)
+        let jumpToEnd = ms(start)
+        print("[benchmark] page fetch deep in history: worst \(String(format: "%.2f", worstPage)) ms; jump to the middle \(String(format: "%.2f", jump)) ms, to the end \(String(format: "%.2f", jumpToEnd)) ms")
+        XCTAssertLessThan(worstPage, 8, "a page must load within a 120 Hz frame")
+        XCTAssertLessThan(jumpToEnd, 250)
+
+        // Searching.
+        for query in ["report", "design review", "#999999", "zq", "nothing-like-this"] {
+            var samples: [Double] = []
+            var found = 0
+            for _ in 0..<3 {
+                start = DispatchTime.now()
+                found = try await store.search(query).count
+                samples.append(ms(start))
+            }
+            samples.sort()
+            print("[benchmark] search \"\(query)\" over \(count): median \(String(format: "%.2f", samples[1])) ms (\(found) results)")
+            XCTAssertLessThan(samples[1], 600)
+        }
+
+        // Recording a copy with the limit at a million (the limit check must not recount).
+        start = DispatchTime.now()
+        for index in 0..<50 {
+            try await store.insert(.text("new copy \(index)"), maxHistory: Preferences.maxHistoryLimit)
+        }
+        let insertEach = ms(start) / 50
+        print("[benchmark] record a copy at \(count) entries: \(String(format: "%.2f", insertEach)) ms each")
+        XCTAssertLessThan(insertEach, 25)
+
+        // Trimming the oldest 1,000 entries.
+        let unpinned = try await store.unpinnedCount()
+        start = DispatchTime.now()
+        try await store.enforceLimit(maxHistory: unpinned - 1_000)
+        print("[benchmark] trim 1,000 oldest: \(String(format: "%.2f", ms(start))) ms")
+        let after = try await store.unpinnedCount()
+        XCTAssertEqual(after, unpinned - 1_000)
+
+        start = DispatchTime.now()
+        try await store.clear(keepPinned: true)
+        print("[benchmark] clear history (keep pinned): \(Int(ms(start))) ms")
+        let remaining = try await store.count()
+        XCTAssertEqual(remaining, count / 10_000)
+    }
+}

@@ -153,7 +153,7 @@ struct ClipboardSettingsView: View {
                 )
                 Separator()
                 SettingRow(title: "History size", description: "Older unpinned items are removed automatically.") {
-                    ShadSelect(selection: $preferences.maxHistory, options: historyOptions(current: preferences.maxHistory), width: 150)
+                    ShadSelect(selection: $preferences.maxHistory, options: historyOptions(current: preferences.maxHistory), width: 170)
                 }
                 Separator()
                 SettingRow(title: "When copied again", description: "How repeated copies of the same content are handled.") {
