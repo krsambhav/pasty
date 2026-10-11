@@ -32,12 +32,20 @@ A fast, quiet clipboard history manager for macOS. Pasty lives in the menu bar, 
 - macOS 14 Sonoma or later, on Apple Silicon or Intel (universal binary)
 - Xcode 16 or later to build (Swift 6 language mode)
 
+## Install
+
+```bash
+curl -fsSL https://github.com/krsambhav/pasty/releases/latest/download/Pasty.zip -o /tmp/Pasty.zip && ditto -xk /tmp/Pasty.zip /Applications && open /Applications/Pasty.app
+```
+
+This needs the repository to be public. Every green push to `main` publishes a release (`v1.0.<build>`), and installed copies **update themselves** in the background (see [Updates](#updates)).
+
 ## Build & run
 
 ```bash
 open Pasty.xcodeproj            # then ⌘R
 # or from the command line:
-scripts/build-app.sh            # → build/Release/Pasty.app (universal) and build/Pasty.zip
+scripts/build-app.sh            # → build/Release/Pasty.app (universal), build/Pasty.zip and its .sha256
 open build/Release/Pasty.app
 ```
 
@@ -84,7 +92,7 @@ Pasting into another app works by sending it a ⌘V keystroke, which macOS only 
 
 ## Privacy
 
-- History lives in `~/Library/Application Support/Pasty/History.sqlite`. Pasty makes no network requests: no accounts, sync, telemetry or favicon fetching.
+- History lives in `~/Library/Application Support/Pasty/History.sqlite`. No accounts, sync, telemetry or favicon fetching. The only network traffic is the update check and download from GitHub, which you can turn off.
 - Content that apps mark as concealed, transient or auto-generated is never stored. This covers the [nspasteboard.org](http://nspasteboard.org) markers plus legacy 1Password and TypeIt4Me markers, which most password managers use.
 - Password managers and Keychain Access are excluded by default. You can edit the list in **Settings › Privacy**.
 - **Skip text that looks like a password or key** is an optional heuristic. It catches common API-key formats and short strings that mix every character class. It **cannot** reliably detect every password and doesn't claim to.
@@ -96,6 +104,24 @@ Pasting into another app works by sending it a ⌘V keystroke, which macOS only 
 - macOS has no clipboard-change notification, so Pasty polls `NSPasteboard.changeCount`, a cheap integer read. Polling runs every 0.25 s right after activity and backs off to 1 s when idle. It stops while the Mac sleeps, and Pasty also checks immediately each time the panel opens. If several copies happen within one interval, only the last one is seen.
 - The source app is best effort. Pasty uses the bundle ID an app declares (`org.nspasteboard.source`) if it gives one, otherwise the frontmost app when the change was noticed.
 
+## Updates
+
+Pasty updates itself from this repository's GitHub Releases:
+
+1. **Check.** A minute after launch and then every 6 hours, Pasty fetches `releases/latest` from the GitHub API. This is the app's only network request; your clipboard never leaves the Mac. Turning off **Settings › About › Update automatically** stops background checks; **Check Now** and the menu bar's **Check for Updates…** still work.
+2. **Download and verify.** `Pasty.zip` downloads in the background and must match the release's `Pasty.zip.sha256`. Once unpacked, the app must have Pasty's bundle identifier, the advertised build number, and a valid code signature. If the installed copy is certificate-signed, the new one must satisfy its *designated requirement*, meaning it was signed by the same certificate.
+3. **Install when idle.** When the panel is closed and no Pasty window is open, a helper script waits for Pasty to quit, swaps the app bundle (rolling back if anything fails), and relaunches it. Any copy made during the restart is picked up when Pasty comes back. You can also use **Restart to Update** in the menu bar or in Settings.
+
+**Releases.** CI builds `1.0.<run number>`, runs every test, and on `main` publishes the tested zip and its checksum as a GitHub release.
+
+**Keep Accessibility permission across updates (recommended, one time).** macOS ties the Accessibility grant to the app's code signature. Ad-hoc builds get a new signature every time, so each update would need the permission granted again. Run this once on your Mac (it needs `gh`):
+
+```bash
+scripts/create-signing-identity.sh krsambhav/pasty
+```
+
+The script creates a self-signed code-signing certificate and stores it as the `MACOS_SIGNING_P12` / `MACOS_SIGNING_PASSWORD` Actions secrets. From then on, every release is signed by that identity, and the permission survives updates. Install the first signed release manually once; signed copies only accept updates signed by the same certificate.
+
 ## Architecture
 
 ```
@@ -104,7 +130,8 @@ Pasty/                       App target (AppKit + SwiftUI)
   App/        PastyApp (entry, LSUIElement), AppCoordinator (wiring & lifecycle), StatusItemController
   Panel/      PanelController (non-activating NSPanel, keyboard routing), PanelModel (@Observable state)
   Views/      PanelRootView (search, footer, empty states), ClipListView/ClipRow, PreviewPane
-  Services/   PasteCoordinator, HotKeyManager (Carbon), HUDController, SystemServices (AX, ⌘V, icons)
+  Services/   PasteCoordinator, HotKeyManager (Carbon), HUDController, SystemServices (AX, ⌘V, icons),
+              Updater (GitHub Releases), FileThumbnails (QuickLook previews of copied files)
   Settings/   SettingsWindowController (sidebar layout), SettingsViews (General / Clipboard / Privacy / About)
   Design/     Theme (shadcn tokens, Plus Jakarta Sans), Components (Button, Switch, Tabs, Kbd, Badge, Card, Select, AlertDialog)
   Resources/  Assets (app icon), Fonts (Plus Jakarta Sans + OFL license)
@@ -115,6 +142,7 @@ PastyCore/                   Swift package with no UI, fully unit-tested
   Search/     SearchQuery, SearchRanker
   Models/     ClipItem, PasteboardSnapshot, HistorySections (Today / Yesterday / …), HexColor, RelativeTime
   Settings/   Preferences (@Observable, UserDefaults-backed), KeyCombo
+  Updates/    UpdateFeed (release parsing, version comparison, SHA-256 verification)
 ```
 
 **Capture pipeline.** `ClipboardMonitor` polls on a private utility queue. On a change it first checks the pasteboard *types* and the source app against the privacy rules, so nothing sensitive is ever read. Only then does it read the data, keeping every representation (RTF, HTML, PNG, file URLs, app-private types) within a size budget. It then classifies, hashes and thumbnails the entry, all off the main thread. Drafts go through an `AsyncStream` to a single consumer, which keeps inserts ordered during bursts of copies.

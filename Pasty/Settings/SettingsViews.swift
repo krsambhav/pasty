@@ -428,7 +428,8 @@ struct AboutSettingsView: View {
 
     private var updateTitle: String {
         switch coordinator.updater.phase {
-        case .idle, .upToDate: "Pasty is up to date"
+        case .idle: coordinator.updater.lastChecked == nil ? "Version \(coordinator.updater.currentVersion)" : "Pasty is up to date"
+        case .upToDate: "Pasty is up to date"
         case .checking: "Checking for updates…"
         case let .downloading(version): "Downloading \(version)…"
         case let .ready(version): "Version \(version) is ready"
