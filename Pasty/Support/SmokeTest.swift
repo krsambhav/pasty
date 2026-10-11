@@ -811,6 +811,7 @@ final class SmokeTest {
         let clip = scrollView.contentView
         let maxY = max(0, (scrollView.documentView?.frame.height ?? 0) - clip.bounds.height)
         results.scroll["rows"] = Double(model.items.count)
+        check("the whole history is listed, not just the newest 500", model.items.count > 1_500, "\(model.items.count) items")
         results.scroll["document height pt"] = (maxY).rounded()
 
         var samples: [Double] = []

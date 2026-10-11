@@ -145,7 +145,11 @@ final class PanelModel {
         let filter = filter
         let started = ContinuousClock.now
         do {
-            let newItems = try await store.search(query, filter: filter)
+            // An empty query lists the whole history (up to 50,000 entries); a search returns the
+            // top 500 matches.
+            let newItems = SearchQuery(query).isEmpty
+                ? try await store.items(filter: filter, limit: 100_000)
+                : try await store.search(query, filter: filter)
             let newTotal = try await store.count()
             // A newer query superseded this one while it ran.
             guard current == generation else { return }
