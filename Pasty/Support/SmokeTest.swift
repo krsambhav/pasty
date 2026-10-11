@@ -391,6 +391,22 @@ final class SmokeTest {
         let inactiveBefore = await waitFor(seconds: 3) { !NSApp.isActive }
         if !inactiveBefore { results.notes.append("Pasty was still active before opening the panel over TextEdit") }
 
+        // Diagnose exactly which step (if any) activates Pasty.
+        var steps: [String] = ["before: \(NSApp.isActive)"]
+        panel.panel.alphaValue = 1
+        panel.panel.orderFrontRegardless()
+        steps.append("orderFront: \(NSApp.isActive)")
+        panel.panel.makeKey()
+        steps.append("makeKey: \(NSApp.isActive)")
+        if let field = panel.searchBridge.field { panel.panel.makeFirstResponder(field) }
+        steps.append("firstResponder: \(NSApp.isActive)")
+        await nextTurn()
+        steps.append("turn: \(NSApp.isActive)")
+        panel.panel.orderOut(nil)
+        await nextTurn()
+        results.notes.append("activation trace: " + steps.joined(separator: ", "))
+        _ = await waitFor(seconds: 2) { !NSApp.isActive }
+
         panel.show()
         await nextTurn()
         check("paste target is the previously active app", panel.previousApp?.processIdentifier == app.processIdentifier)
