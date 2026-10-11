@@ -171,7 +171,9 @@ final class SmokeTest {
                 let activeNow = NSApp.isActive
                 await nextTurn()
                 check("panel becomes key window", keyNow || panel.panel.isKeyWindow, "key now: \(keyNow), after a turn: \(panel.panel.isKeyWindow)")
-                check("showing the panel doesn't activate Pasty", wasActive || !activeNow, "was active: \(wasActive), active now: \(activeNow)")
+                if !wasActive, activeNow {
+                    results.notes.append("With no other app frontmost, macOS activated Pasty for the key panel (expected); focus retention is checked over TextEdit.")
+                }
                 check("search field focused on open", isSearchFieldFocused)
                 check("panel is on the screen under the pointer", NSScreen.screenContainingMouse.map { $0.frame.intersects(panel.panel.frame) } ?? true)
             }
@@ -390,6 +392,10 @@ final class SmokeTest {
         panel.show()
         await nextTurn()
         check("paste target is the previously active app", panel.previousApp?.processIdentifier == app.processIdentifier)
+        check("opening the panel keeps the other app active (no focus stealing)",
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && !NSApp.isActive,
+              "frontmost: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"), Pasty active: \(NSApp.isActive)")
+        check("panel is key over another app", panel.panel.isKeyWindow)
         guard await coordinator.pasteCoordinator.run(action, on: item) else { return "Paste keystroke was not sent" }
         let landed = await waitFor(seconds: 5) { Self.focusedValue(pid: app.processIdentifier)?.contains(expected) == true }
         return landed ? "verified" : "text did not appear (value: \(Self.focusedValue(pid: app.processIdentifier) ?? "nil"))"
