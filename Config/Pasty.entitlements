@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Pasty is intentionally NOT sandboxed: posting the ⌘V keystroke into other apps
+  (CGEventPost, gated by the Accessibility permission) is not available to sandboxed apps.
+  It runs with the Hardened Runtime and requests no additional entitlements — in particular
+  no network client entitlement is needed because Pasty never makes network requests.
+-->
+<dict/>
+</plist>

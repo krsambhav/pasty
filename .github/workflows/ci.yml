@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+defaults:
+  run:
+    shell: bash -eo pipefail {0}
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true

@@ -182,7 +182,7 @@ public actor ClipboardStore {
             try db.prepare("INSERT INTO thumbnails (item_id, data) VALUES (?, ?)").bind(.integer(id), .blob(thumbnail)).run()
         }
 
-        let meta = [draft.source?.name, draft.subtitle, draft.kind.displayName].compactMap { $0 }.joined(separator: " ")
+        let meta = [draft.source?.name, draft.subtitle].compactMap { $0 }.joined(separator: " ")
         try db.prepare("INSERT INTO items_fts (rowid, content, meta) VALUES (?, ?, ?)")
             .bind(.integer(id), .text(draft.searchContent), .text(meta))
             .run()
@@ -299,9 +299,9 @@ public actor ClipboardStore {
         if filter == .pinned { clauses.append("i.pinned = 1") }
 
         let sql = """
-        SELECT \(Self.itemColumns), i.preview FROM items_fts f JOIN items i ON i.id = f.rowid
+        SELECT \(Self.itemColumns), substr(i.preview, 1, 600) FROM items_fts f JOIN items i ON i.id = f.rowid
         WHERE \(clauses.joined(separator: " AND "))
-        ORDER BY i.updated_at DESC LIMIT 2000
+        ORDER BY i.updated_at DESC LIMIT 1000
         """
         let statement = try db.prepare(sql)
         for (offset, value) in values.enumerated() {
