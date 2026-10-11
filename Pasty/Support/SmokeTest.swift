@@ -531,7 +531,14 @@ final class SmokeTest {
             let started = ContinuousClock.now
             await externalCopy(items)
             let recorded = await waitFor(seconds: 10) { self.model.items.contains { $0.title == title && !existing.contains($0.id) } }
-            check("large content recorded: \(name)", recorded)
+            var detail = ""
+            if !recorded {
+                let stored = (try? await store.search(title))?.filter { $0.title == title }.map(\.id) ?? []
+                detail = "stored ids \(stored), existing \(existing), query '\(model.query)', filter \(model.filter), "
+                    + "list \(model.items.count) items, first '\(model.items.first?.title.prefix(40) ?? "-")', "
+                    + "pasteboard types \(NSPasteboard.general.types?.map(\.rawValue) ?? []), paused \(model.isPaused)"
+            }
+            check("large content recorded: \(name)", recorded, detail)
             results.largeContent["capture \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
             return model.items.first { $0.title == title && !existing.contains($0.id) }
         }
