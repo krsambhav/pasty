@@ -193,6 +193,8 @@ struct SmokeTest {
     // MARK: Screenshots
 
     private func captureScreenshots() async -> [String] {
+        // Start from a clean history so screenshots show only representative content.
+        try? await coordinator.store.clear(keepPinned: false)
         await seedDemoContent()
         let panel = coordinator.panelController!
         var files: [String] = []
