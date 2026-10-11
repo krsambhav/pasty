@@ -213,9 +213,9 @@ final class AppCoordinator {
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                monitor.start()
-                monitor.checkNow()
-                model.now = Date()
+                self.monitor.start()
+                self.monitor.checkNow()
+                self.model.now = Date()
             }
         })
     }

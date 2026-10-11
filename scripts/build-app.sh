@@ -16,11 +16,12 @@ xcodebuild \
   ARCHS="arm64 x86_64" \
   ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_IDENTITY="-" \
-  build | tee build-xcodebuild.log | grep -E "^(\*\*|.*(error|warning):)" || true
+  build > build-xcodebuild.log 2>&1 || true
+grep -E "warning:" build-xcodebuild.log | grep -v "^note" | sort -u | head -80 || true
 
 if ! grep -q "BUILD SUCCEEDED" build-xcodebuild.log; then
-  echo "xcodebuild failed — last 60 lines:" >&2
-  tail -60 build-xcodebuild.log >&2
+  echo "xcodebuild failed. Errors:" >&2
+  grep -E "error:" build-xcodebuild.log | sort -u | head -150 >&2 || tail -60 build-xcodebuild.log >&2
   exit 1
 fi
 
