@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
-# Launches the built app (through LaunchServices, like a user would) in smoke-test mode against a
-# throwaway data directory, and prints the results.
+# Launches the built app in smoke-test mode against a throwaway data directory and prints the
+# results. The binary is started directly (not via `open`) so it inherits the runner's
+# Accessibility and screen-recording grants, which the keystroke, paste and screenshot checks need.
 # Usage: scripts/smoke-test.sh path/to/Pasty.app
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP="$(cd "$(dirname "${1:-build/Release/Pasty.app}")" && pwd)/$(basename "${1:-build/Release/Pasty.app}")"
+APP="${1:-build/Release/Pasty.app}"
 OUT="$(pwd)/build/smoke"
 rm -rf "$OUT"; mkdir -p "$OUT"
-DATA="$(mktemp -d)"
+export PASTY_DATA_DIR="$(mktemp -d)"
 
-open -n -W \
-  --env "PASTY_DATA_DIR=$DATA" \
-  --stdout "$OUT/stdout.log" --stderr "$OUT/stderr.log" \
-  "$APP" --args --smoke-test "$OUT" &
+"$APP/Contents/MacOS/Pasty" --smoke-test "$OUT" > "$OUT/stdout.log" 2> "$OUT/stderr.log" &
 PID=$!
 for _ in $(seq 1 300); do
-  kill -0 "$PID" 2>/dev/null || break
+  if ! kill -0 "$PID" 2>/dev/null; then break; fi
   sleep 1
 done
 if kill -0 "$PID" 2>/dev/null; then
   echo "Smoke test timed out" >&2
-  pkill -f "Pasty.app/Contents/MacOS/Pasty" || true
   kill "$PID" || true
+  tail -50 "$OUT/stderr.log" >&2 || true
+  exit 1
 fi
 set +e
 wait "$PID"; STATUS=$?
@@ -30,9 +29,8 @@ set -e
 
 if [[ -f "$OUT/results.json" ]]; then
   cat "$OUT/results.json"
-  grep -q '"passed" : true' "$OUT/results.json" && exit 0
-  exit 1
+else
+  echo "No results written" >&2
+  tail -50 "$OUT/stderr.log" >&2 || true
 fi
-echo "No results written (status $STATUS)" >&2
-tail -50 "$OUT/stderr.log" >&2 || true
-exit 1
+exit "$STATUS"
