@@ -22,9 +22,9 @@ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN
 security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
 
 # A self-signed certificate must be trusted for code signing before codesign will use it.
-CERT="$RUNNER_TEMP/pasty-signing.cer"
-IDENTITY="$(security find-certificate -a -k "$KEYCHAIN" | sed -n 's/.*"alis"<blob>="\(.*\)"/\1/p' | head -1)"
-security find-certificate -c "$IDENTITY" -p "$KEYCHAIN" > "$CERT"
+CERT="$RUNNER_TEMP/pasty-signing.pem"
+/usr/bin/openssl pkcs12 -in "$P12" -clcerts -nokeys -passin "pass:${MACOS_SIGNING_PASSWORD:-}" -out "$CERT"
+IDENTITY="$(/usr/bin/openssl x509 -in "$CERT" -noout -subject | sed -n 's/.*CN *= *\([^,/]*\).*/\1/p')"
 sudo security add-trusted-cert -d -r trustRoot -p codeSign -k "$KEYCHAIN" "$CERT"
 security find-identity -v -p codesigning "$KEYCHAIN"
 rm -f "$P12"

@@ -76,7 +76,7 @@ jobs:
           /usr/bin/openssl pkcs12 -export -inkey "$WORK/key.pem" -in "$WORK/cert.pem" -name "Pasty CI Test" -out "$WORK/id.p12" -passout pass:test
           export GITHUB_ENV="$WORK/env" MACOS_SIGNING_P12="$(base64 -i "$WORK/id.p12")" MACOS_SIGNING_PASSWORD=test
           scripts/import-signing-identity.sh
-          source "$WORK/env"
+          while IFS='=' read -r key value; do export "$key=$value"; done < "$WORK/env"
           cp -R build/Release/Pasty.app "$WORK/Pasty.app"
           codesign --force --deep --options runtime --timestamp=none --keychain "$SIGN_KEYCHAIN" --sign "$SIGN_IDENTITY" "$WORK/Pasty.app"
           codesign --verify --deep --strict "$WORK/Pasty.app"
