@@ -70,7 +70,9 @@ final class ActivationWaiter {
     }
 
     static func activate(_ app: NSRunningApplication, timeout: Duration = .milliseconds(800)) async -> Bool {
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier, !NSApp.isActive {
+        // Note: while a non-activating panel is key, `NSApp.isActive` reads true even though the
+        // other app keeps the menu bar. The frontmost application is the reliable signal.
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
             return true
         }
         let waiter = ActivationWaiter(pid: app.processIdentifier)

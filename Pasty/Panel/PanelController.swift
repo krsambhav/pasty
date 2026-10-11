@@ -129,8 +129,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         removeKeyMonitor()
         model.showsQuickKeys = false
         panel.orderOut(nil)
-        // If Pasty became active (e.g. opened from the menu bar), hand focus back explicitly.
-        if NSApp.isActive, !NSApp.windows.contains(where: { $0.isVisible && $0 !== panel && $0.level == .normal }) {
+        // If Pasty became the frontmost app (e.g. opened from the menu bar), hand focus back.
+        // (`NSApp.isActive` can't be used: it reads true whenever the non-activating panel is key.)
+        let pastyIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        if pastyIsFrontmost, !NSApp.windows.contains(where: { $0.isVisible && $0 !== panel && $0.level == .normal }) {
             previousApp?.activate()
         }
     }
