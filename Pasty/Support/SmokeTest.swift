@@ -30,7 +30,6 @@ final class SmokeTest {
         var pasteLatencyMs: [Double] = []
         var largeContent: [String: Double] = [:]
         var mainThreadMaxStallMs: Double?
-        var mainThreadP99StallMs: Double?
         var stressCycles = 0
         var stressMemoryGrowthMB: Double?
         var idleCPUPercent: Double?
@@ -445,7 +444,7 @@ final class SmokeTest {
 
     // MARK: - Large content (10,000-line code, 10 MB single line)
 
-    static func code(lines: Int) -> String {
+    nonisolated static func code(lines: Int) -> String {
         (0..<lines).map { index in
             switch index % 5 {
             case 0: "func handler\(index)(request: Request) async throws -> Response {"
@@ -458,7 +457,7 @@ final class SmokeTest {
     }
 
     /// Syntax-colored RTF, like Xcode puts on the pasteboard.
-    static func coloredRTF(_ code: String) -> Data? {
+    nonisolated static func coloredRTF(_ code: String) -> Data? {
         let result = NSMutableAttributedString(string: code, attributes: [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.black,
         ])
@@ -471,23 +470,45 @@ final class SmokeTest {
     }
 
     private func testLargeContent() async {
+        // Fixtures are built off the main thread: they stand in for other apps' work.
+        let marker = "final-marker-\(UUID().uuidString.prefix(8))"
+        let fixtures = await Task.detached(priority: .userInitiated) { () -> (String, String, String, Data?) in
+            let plain = SmokeTest.code(lines: 10_000) + "\n// \(marker)-plain"
+            let rich = SmokeTest.code(lines: 10_000) + "\n// \(marker)-rich"
+            let minified = String(repeating: "aZ9+/", count: 2_000_000) + "\(marker)-min"
+            return (plain, rich, minified, SmokeTest.coloredRTF(rich))
+        }.value
+        let (plain, rich, minified, rtfData) = fixtures
+        guard let rtf = rtfData else { return check("colored RTF fixture", false) }
+        results.largeContent["10k-line code KB"] = Double(plain.utf8.count / 1_024)
+        results.largeContent["10k-line colored RTF KB"] = Double(rtf.count / 1_024)
+
         let watchdog = MainThreadWatchdog()
         watchdog.start()
-        defer {
-            let stats = watchdog.stop()
-            results.mainThreadMaxStallMs = stats.max
-            results.mainThreadP99StallMs = stats.p99
+        defer { _ = watchdog.stop() }
+        func phase(_ name: String) {
+            let stats = watchdog.snapshot()
+            results.largeContent["main-thread max stall during \(name) ms"] = stats.max
+            results.mainThreadMaxStallMs = max(results.mainThreadMaxStallMs ?? 0, stats.max)
+            watchdog.reset()
         }
 
-        let marker = "final-marker-\(UUID().uuidString.prefix(8))"
-        let plain = Self.code(lines: 10_000) + "\n// \(marker)-plain"
-        let rich = Self.code(lines: 10_000) + "\n// \(marker)-rich"
-        let minified = String(repeating: "aZ9+/", count: 2_000_000) + "\(marker)-min"
+        /// Another app copies: the write happens off our main thread, as it would in reality.
+        func externalCopy(_ items: [(String, Data)]) async {
+            let payload = UncheckedSendable(value: items)
+            await Task.detached {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                let entry = NSPasteboardItem()
+                for (type, data) in payload.value { entry.setData(data, forType: NSPasteboard.PasteboardType(type)) }
+                pasteboard.writeObjects([entry])
+            }.value
+        }
 
-        func record(_ name: String, _ write: () -> Void, title: String) async -> ClipItem? {
+        func record(_ name: String, _ items: [(String, Data)], title: String) async -> ClipItem? {
             let existing = Set(model.items.filter { $0.title == title }.map(\.id))
             let started = ContinuousClock.now
-            write()
+            await externalCopy(items)
             let recorded = await waitFor(seconds: 10) { self.model.items.contains { $0.title == title && !existing.contains($0.id) } }
             check("large content recorded: \(name)", recorded)
             results.largeContent["capture \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
@@ -495,22 +516,14 @@ final class SmokeTest {
         }
 
         let firstLine = ContentAnalyzer.makeTitle(from: plain)
-        guard let plainItem = await record("10k-line code", { copy(plain) }, title: firstLine) else { return }
-        results.largeContent["10k-line code KB"] = Double(plain.utf8.count / 1_024)
-
-        guard let rtf = Self.coloredRTF(rich) else { return check("colored RTF fixture", false) }
-        results.largeContent["10k-line colored RTF KB"] = Double(rtf.count / 1_024)
-        let richItem = await record("10k-line colored RTF", {
-            pasteboard.clearContents()
-            let entry = NSPasteboardItem()
-            entry.setData(rtf, forType: .rtf)
-            entry.setString(rich, forType: .string)
-            pasteboard.writeObjects([entry])
-        }, title: firstLine)
-        let minifiedItem = await record("10 MB single line", { copy(minified) }, title: ContentAnalyzer.makeTitle(from: minified))
+        guard let plainItem = await record("10k-line code", [(PasteboardType.string, Data(plain.utf8))], title: firstLine) else { return }
+        let richItem = await record("10k-line colored RTF", [(PasteboardType.rtf, rtf), (PasteboardType.string, Data(rich.utf8))], title: firstLine)
+        let minifiedItem = await record("10 MB single line", [(PasteboardType.string, Data(minified.utf8))], title: ContentAnalyzer.makeTitle(from: String(minified.prefix(1_000))))
+        phase("capture")
 
         panel.show()
         await settle()
+        phase("panel open")
         for (name, item) in [("10k-line code", plainItem), ("10k-line colored RTF", richItem), ("10 MB single line", minifiedItem)] {
             guard let item, model.items.contains(where: { $0.id == item.id }) else { continue }
             let started = ContinuousClock.now
@@ -519,8 +532,10 @@ final class SmokeTest {
             panel.panel.displayIfNeeded()
             check("preview appears: \(name)", shown)
             results.largeContent["preview \(name) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
+            try? await Task.sleep(for: .milliseconds(150))
         }
         check("10k-line code previews as code", plainItem.isCode)
+        phase("previews")
 
         // Holding ↓ across large entries.
         model.select(model.items[0])
@@ -529,25 +544,37 @@ final class SmokeTest {
             model.moveSelection(by: 1)
             try? await Task.sleep(for: .milliseconds(16))
         }
+        try? await Task.sleep(for: .milliseconds(300))
         results.largeContent["12 rapid ↓ across large entries ms"] = ((ContinuousClock.now - flickStart).milliseconds * 10).rounded() / 10
+        phase("rapid navigation")
 
         let searchStart = ContinuousClock.now
         model.query = "\(marker)-plain"
         let found = await waitFor(seconds: 5) { self.model.items.first?.id == plainItem.id }
         check("search finds text on the last of 10,000 lines", found)
         results.largeContent["search last line ms"] = ((ContinuousClock.now - searchStart).milliseconds * 10).rounded() / 10
-
-        model.query = String(plain.prefix(5_000))
+        let hugeQuery = String(plain.prefix(5_000))
+        model.query = hugeQuery
         check("pasting a huge query into search stays responsive", await waitFor(seconds: 3) { self.model.hasLoaded })
+        phase("search")
+
+        // The paste itself: from choosing the item to ⌘V being sent.
+        model.query = ""
+        _ = await waitFor(seconds: 2) { self.model.items.first != nil }
+        await coordinator.pasteCoordinator.run(.copy, on: plainItem)
+        try? await Task.sleep(for: .milliseconds(200))
+        phase("copy back")
+        check("10k-line code is restored exactly", pasteboard.string(forType: .string) == plain)
         panel.hide()
+
+        let worst = results.largeContent.filter { $0.key.hasPrefix("main-thread") }.values.max() ?? 0
+        check("main thread never stalls > 100 ms with large content", worst < 100, "worst \(worst) ms")
+        _ = watchdog.stop()
 
         if results.accessibilityTrusted {
             let result = await paste(plainItem, action: .paste, expecting: "\(marker)-plain")
             check("paste 10k-line code into TextEdit (last line arrives)", result == "verified", result)
         }
-        await settle()
-        let stats = watchdog.snapshot()
-        check("main thread never stalls > 100 ms with large content", stats.max < 100, "max \(stats.max) ms")
     }
 
     // MARK: - Stress & idle
@@ -765,6 +792,10 @@ final class MainThreadWatchdog: @unchecked Sendable {
         }
         self.timer = timer
         timer.resume()
+    }
+
+    func reset() {
+        lock.withLock { samples.removeAll() }
     }
 
     private func record(_ delay: Double) {
