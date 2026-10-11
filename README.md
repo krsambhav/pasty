@@ -6,15 +6,24 @@ A fast, quiet clipboard history manager for macOS. Pasty lives in the menu bar, 
 
 <p align="center">
   <img src="docs/panel-light.png" width="49%" alt="Pasty in light mode, previewing a code snippet">
-  <img src="docs/panel-dark.png" width="49%" alt="Pasty in dark mode, previewing a link">
+  <img src="docs/panel-dark.png" width="49%" alt="Pasty in dark mode, previewing a pinned link">
 </p>
 <p align="center">
-  <img src="docs/panel-search-dark.png" width="49%" alt="Searching with highlighted matches">
-  <img src="docs/panel-image-light.png" width="49%" alt="Image preview">
+  <img src="docs/panel-search-light.png" width="49%" alt="Searching with highlighted matches">
+  <img src="docs/panel-image-dark.png" width="49%" alt="Image preview">
+</p>
+<p align="center">
+  <img src="docs/settings-general-light.png" width="49%" alt="Settings, General pane">
+  <img src="docs/settings-privacy-dark.png" width="49%" alt="Settings, Privacy pane in dark mode">
+</p>
+<p align="center">
+  <img src="docs/empty-dark.png" width="49%" alt="Empty state">
+  <img src="docs/toast-dark.png" width="49%" alt="Toast shown when paste permission is missing">
 </p>
 <p align="center"><sub>Screenshots are captured automatically by the CI smoke test from the real app.</sub></p>
 
 - Native Swift 6, SwiftUI and AppKit. No web views, no third-party packages.
+- Designed with the [shadcn/ui](https://ui.shadcn.com) design system (zinc theme), rebuilt natively in SwiftUI, and set in [Plus Jakarta Sans](https://fonts.google.com/specimen/Plus+Jakarta+Sans).
 - Local-first. History is stored in SQLite on your Mac and never sent anywhere.
 - Keyboard-first. Every action has a key.
 
@@ -96,12 +105,15 @@ Pasty/                       App target (AppKit + SwiftUI)
   Panel/      PanelController (non-activating NSPanel, keyboard routing), PanelModel (@Observable state)
   Views/      PanelRootView (search, footer, empty states), ClipListView/ClipRow, PreviewPane
   Services/   PasteCoordinator, HotKeyManager (Carbon), HUDController, SystemServices (AX, ⌘V, icons)
-  Settings/   SettingsWindowController (toolbar tabs), SettingsViews (General / Clipboard / Privacy)
+  Settings/   SettingsWindowController (sidebar layout), SettingsViews (General / Clipboard / Privacy / About)
+  Design/     Theme (shadcn tokens, Plus Jakarta Sans), Components (Button, Switch, Tabs, Kbd, Badge, Card, Select, AlertDialog)
+  Resources/  Assets (app icon), Fonts (Plus Jakarta Sans + OFL license)
   Support/    SmokeTest (end-to-end self check used by CI)
 PastyCore/                   Swift package with no UI, fully unit-tested
   Storage/    ClipboardStore (actor; SQLite WAL + FTS5 trigram), SQLite (statement-caching wrapper)
   Capture/    ClipboardMonitor, PasteboardIO, ContentAnalyzer, PrivacyPolicy/SecretDetector
   Search/     SearchQuery, SearchRanker
+  Models/     ClipItem, PasteboardSnapshot, HistorySections (Today / Yesterday / …), HexColor, RelativeTime
   Settings/   Preferences (@Observable, UserDefaults-backed), KeyCombo
 ```
 
@@ -109,13 +121,19 @@ PastyCore/                   Swift package with no UI, fully unit-tested
 
 **Storage.** `ClipboardStore` is an actor that owns one SQLite connection: WAL, `synchronous=NORMAL`, incremental auto-vacuum, cached prepared statements. Representations are kept as blobs so an entry restores exactly as it was copied. List queries never touch blobs or long previews.
 
-**Search.** FTS5 with the trigram tokenizer gives case-insensitive substring matching. Terms shorter than three characters fall back to `LIKE`. Candidates are ranked in this order: exact → prefix → whole word → substring → all terms → deeper in content → metadata only. Pinned items get a small boost and recency breaks ties. Stale queries are discarded with a generation counter, so typing never blocks the UI.
+**Search.** FTS5 with the trigram tokenizer gives case-insensitive substring matching, including Unicode case folding ("école" finds "ÉCOLE"). Terms shorter than three characters fall back to `LIKE`, except non-ASCII ones ("é", "日本"), which are matched in Swift because SQLite's `LIKE` only folds ASCII. Candidates are ranked in this order: exact → prefix → whole word → substring → all terms → deeper in content → metadata only. Pinned items get a small boost and recency breaks ties. Stale queries are discarded with a generation counter, so typing never blocks the UI.
 
 **Paste.** The panel is a *non-activating* `NSPanel`, so it takes keyboard focus without activating Pasty, and the app you were using stays frontmost. Choosing an item works like this:
 1. Write the stored representations to the pasteboard on the monitor's queue. The monitor adopts the new change count, so Pasty never records its own write.
 2. Hide the panel.
-3. If the target app isn't frontmost (for example, you opened Pasty from the menu bar), activate it and wait for its activation notification. There is no fixed sleep.
+3. If the target app isn't frontmost (for example, you opened Pasty from the menu bar), activate it and wait for its activation notification. There is no fixed sleep. The check uses the frontmost application, not `NSApp.isActive`, which reads true whenever a non-activating panel is key.
 4. Post ⌘V with explicit modifier flags, so a held ⇧ can't turn it into "Paste and Match Style".
+
+**Design system.** shadcn/ui is a React library, so Pasty doesn't use its code. It reimplements its design language natively in `Pasty/Design`:
+- `Theme.swift`: shadcn's zinc color tokens (`background`, `foreground`, `muted`, `accent`, `border`, `ring`, `primary`, `destructive`…) as dynamic colors that follow Light/Dark, its radius scale, and its type scale.
+- `Components.swift`: `Button` (primary / secondary / outline / ghost / destructive / link, in sizes xs–md), `Switch`, `Tabs`, `Kbd`, `Badge`, `Card`, `Separator`, `Select`, `AlertDialog`, and a settings form row.
+
+The panel follows shadcn's Command pattern: an input, grouped results, and right-aligned shortcuts. Toasts follow Sonner. **Plus Jakarta Sans** (SIL Open Font License, Regular/Medium/SemiBold/Bold) is bundled in `Pasty/Resources/Fonts` and registered for the process at launch. If registration ever fails, every text style falls back to the system font. Code previews use SF Mono. System-drawn menus (the menu bar menu and right-click menus) keep the native look; the menu bar menu also uses the bundled font.
 
 **Global shortcut.** Carbon's `RegisterEventHotKey`. It needs no Accessibility or Input Monitoring permission. Registration conflicts are reported in Settings.
 
@@ -125,46 +143,59 @@ Measured on GitHub's `macos-15` runners (Apple Silicon VMs, so slower than a typ
 
 | Metric | Result |
 | --- | --- |
-| Panel open (warm, 30 cycles) | **5.0 ms median**, 7.8 ms p95 |
-| Panel first open after launch | 26 ms |
-| Search field focused on open | yes, verified |
+| Panel open (warm, 30 cycles) | **5.8 ms median**, 8.3 ms p95 |
+| Panel first open after launch | 24 ms |
+| Paste into TextEdit (choose item → ⌘V sent) | **~20 ms** |
 | Load full 10,000-item list | ~10 ms median |
-| Search, 10,000 items, single term | ~23–30 ms median (synthetic worst case: nearly every item matches) |
-| Search, 10,000 items, two terms | ~52 ms median (same worst case; real histories match far fewer items) |
-| Capture + thumbnail of a 5K screenshot | ~32 ms, off the main thread |
-| Copy → recorded in history | ~220 ms (the polling interval) |
-| Idle CPU (10 s sample) | 0.2 % |
-| Memory (physical footprint) | ~21 MB |
-| Paste into TextEdit via ⌘V | verified via the Accessibility API |
+| Search, 10,000 items, one term | ~30–37 ms median (synthetic worst case: nearly every item matches) |
+| Search, 10,000 items, two terms | ~61 ms median (same worst case; real histories match far fewer items) |
+| Capture + thumbnail of a 5K screenshot | ~31 ms, off the main thread |
+| Capture of 10 MB of text | ~220 ms, off the main thread |
+| Copy → recorded in history | ~230 ms (the polling interval) |
+| Idle CPU (10 s sample) | 0.04 % |
+| Memory (physical footprint) | ~34 MB |
+| 100 rapid open/close cycles | +6.5 MB, no leak trend |
 
 Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVStack` with `Equatable` fixed-height rows; observation scoped so selection changes don't re-render the list content; thumbnails decoded at 160 px and cached; full images downsampled with ImageIO before display; prepared statements; and queries that skip blob columns.
 
 ## Testing
 
-`swift test --package-path PastyCore` covers:
-- **Change detection:** pre-existing content is ignored, each change is captured exactly once, rapid consecutive copies resolve to the latest, Pasty's own writes are ignored, copies made while paused are forgotten.
-- **Duplicates:** move-to-top, ignore-consecutive, keep-all.
-- **Retention:** the oldest unpinned items are trimmed and pinned items are never removed; clear with and without pinned items.
-- **Search:** case-insensitive, partial, multi-term, short queries, ranking order, recency ties, metadata and file names, special characters and FTS operators, highlight ranges.
-- **Persistence:** reopening the database, WAL mode, recovery from a corrupt file.
-- **Serialization:** byte-exact round trips of multi-item, multi-type snapshots; rich text (bold survives); multiple files; images with thumbnail and dimensions; a 5K screenshot; 5.4 MB of text.
-- **Privacy:** concealed, transient, auto-generated and legacy markers; excluded apps; images disabled; the secret heuristic; the size budget.
-- **Preferences:** defaults, persistence across instances, shortcut validation.
+**107 unit tests** (`swift test --package-path PastyCore`) cover:
+- **Change detection:** pre-existing content is ignored, each change is captured exactly once, rapid copies resolve to the latest, Pasty's own writes are ignored (even from an earlier session), paused copies are forgotten, a cleared pasteboard is skipped, rules change at runtime, the real timer captures and stops, and a restart picks up changes made while stopped (sleep/wake).
+- **Content:** empty and whitespace-only text; emoji, ZWJ sequences, combining marks, RTL, CJK; CRLF line endings; NUL bytes; invalid UTF-8; RTF-only and HTML-only content (scripts and styles stripped); PDF and app-private data (kept and restored verbatim); corrupt and TIFF-only images; tiny images; text-plus-image spreadsheet cells; URL edge cases (IDN, localhost, `javascript:`, multi-line); file names with spaces and accents; hex colors (including full-width digits); relative times (including future dates); date grouping.
+- **Storage:** duplicates (move-to-top, ignore-consecutive, keep-all, duplicate of a pinned item), retention (a zero limit, more pinned items than the limit), operations on missing IDs, 200 concurrent inserts, reads during writes, an 8 MB binary and empty blobs round-tripping byte-exact, reopening after clear and vacuum, corrupt-file recovery, WAL.
+- **Search:** ranking order, recency ties, metadata and file names, SQL-injection and FTS-syntax queries, a 10,000-character query, Unicode case folding, short non-ASCII terms, emoji, matches beyond the preview, highlight ranges with emoji and combining marks.
+- **Privacy:** concealed, transient, auto-generated and legacy markers; excluded apps; unknown sources; the secret heuristic; the size budget; promise and synthesized types.
+- **Preferences:** defaults, persistence, corrupt stored values, clamping, an emptied exclusion list.
 - **Benchmarks:** a 10,000-entry history.
 
-`scripts/smoke-test.sh` runs the built app against a throwaway database. It copies via the real general pasteboard, measures capture latency, makes 20 rapid copies, opens and closes the panel 30 times (checking timing and search-field focus), copies an entry back (checking an exact restore and no duplicate entry), and measures idle CPU over 10 s and memory footprint.
+**63 end-to-end checks** (`scripts/smoke-test.sh`) run against the built app on a throwaway database. With Accessibility granted, they drive real keystrokes through `CGEvent`:
+- Fonts are registered and used.
+- Panel placement is correct on six display layouts (negative coordinates, portrait, smaller than the panel).
+- Capture works, including 20 rapid copies with no duplicates.
+- 30 open/close cycles: timing, focus ready on open, panel is key, Pasty never becomes the frontmost app.
+- The list updates while the panel is open, and the selection holds.
+- Deleting selects the next item. The Pinned filter works, and unpinning updates it.
+- Search covers no results, whitespace-only queries, and case-insensitive grouped results. The selection clamps at both ends.
+- Copying an item back restores it exactly, creates no duplicate, and moves it to the top.
+- Pause and resume, and simulated sleep/wake.
+- The permission-denied path: it copies, reports failure, and shows a toast.
+- Typing goes into the search field. ↑/↓, Tab and Esc work.
+- The global shortcut opens and closes the panel.
+- Pasting into TextEdit keeps TextEdit frontmost. Paste as plain text works into a rich document.
+- 100-cycle stress and leak check.
+- Idle CPU stays under 1%.
+- 19 screenshots of every surface in both appearances.
 
 ### Manual validation (needs a person and permissions)
 
-These depend on the window server, other apps, or a human-granted Accessibility permission, so they are not automated:
+These need real hardware or system state that CI can't provide:
 
-1. **Paste into apps:** grant Accessibility, then paste with Return into TextEdit (rich text keeps its formatting), Terminal, Safari's address bar, Notes (an image), and Finder (a copied file).
-2. **Permission denied:** remove Pasty from Accessibility and press Return. You should see the "Copied — press ⌘V" HUD and the system prompt. ⌘V should then paste the item.
-3. **Focus:** open Pasty over a text field. The field's app must stay frontmost (its menu bar title doesn't change), and after pasting the caret continues where it was.
-4. **Full screen & Spaces:** open Pasty over a full-screen app and on another Space. It should appear over the current Space.
-5. **Multiple displays:** it should open on the display under the pointer.
-6. **Clipboard changes while open:** with the panel open, copy something with a mouse in another app. The list updates in place.
-7. **Sleep/wake:** sleep the Mac, wake it, copy, open Pasty. The new item is there.
-8. **Menu bar:** Pause/Resume (icon shows pause bars), hide the icon, then reopen Pasty from Finder to get Settings.
-9. **Launch at login:** toggle it in Settings and check **System Settings › General › Login Items**.
-10. **Appearance & accessibility:** Light/Dark/System, Increase Contrast, Reduce Motion (no fades), and VoiceOver (selection changes are announced).
+1. **Other target apps:** paste into Terminal, Safari's address bar, Notes (an image), Finder (a copied file), and TextEdit with formatting kept. CI only exercises TextEdit, with plain and plain-text paste.
+2. **Real permission denial:** remove Pasty from Accessibility and press Return. The system prompt should appear (CI simulates denial without the prompt).
+3. **Full screen & Spaces:** open Pasty over a full-screen app and on another Space.
+4. **Physical multiple displays:** placement math is tested on six layouts; confirm that the panel follows the pointer across real screens.
+5. **Real sleep/wake:** CI simulates the workspace notifications. Close the lid, reopen it, copy, and check the item appears.
+6. **Menu bar:** Pause/Resume (the icon shows pause bars), hide the icon, then reopen Pasty from Finder to get Settings.
+7. **Launch at login:** toggle it in Settings and check **System Settings › General › Login Items**.
+8. **Accessibility:** Reduce Motion (no fades) and VoiceOver (selection changes are announced).
