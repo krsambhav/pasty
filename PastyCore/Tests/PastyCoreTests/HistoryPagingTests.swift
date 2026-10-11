@@ -70,7 +70,8 @@ final class HistoryPagingTests: XCTestCase {
         let calendar = Calendar(identifier: .gregorian)
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let store = try ClipboardStore(url: nil)
-        for (index, ago) in [60.0, 3_600, 86_400 * 1.2, 86_400 * 3, 86_400 * 30, -500].enumerated() {
+        let agos: [TimeInterval] = [60, 3_600, 86_400 * 1.2, 86_400 * 3, 86_400 * 30, -500]
+        for (index, ago) in agos.enumerated() {
             try await store.insert(.text("item \(index)", date: now.addingTimeInterval(-ago)), duplicates: .keepAll)
         }
         let layout = try await store.layout(now: now, calendar: calendar)
