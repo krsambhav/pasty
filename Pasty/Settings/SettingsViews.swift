@@ -163,6 +163,8 @@ struct ClipboardSettingsView: View {
                 SwitchRow(title: "Save images", description: "Record screenshots and copied images.", isOn: $preferences.captureImages)
             }
 
+            ImportExportSection(archive: coordinator.archive)
+
             SettingsSection(title: "Clear") {
                 SwitchRow(
                     title: "Keep pinned items",
@@ -185,6 +187,9 @@ struct ClipboardSettingsView: View {
             }
         }
         .task { itemCount = try? await coordinator.store.count() }
+        .onChange(of: coordinator.archive.state) { _, _ in
+            Task { itemCount = try? await coordinator.store.count() }
+        }
         .alertDialog($dialog) {
             Task {
                 await coordinator.clearHistory()
@@ -197,6 +202,77 @@ struct ClipboardSettingsView: View {
         var choices = Preferences.historyLimitChoices
         if !choices.contains(current) { choices.append(current); choices.sort() }
         return choices.map { ($0, "\($0.formatted()) items") }
+    }
+}
+
+/// Import from / export to `.clipbookarchive` — ClipBook's export format, so history moves both ways.
+private struct ImportExportSection: View {
+    @Bindable var archive: ArchiveController
+
+    var body: some View {
+        SettingsSection(
+            title: "Import & Export",
+            footer: "To bring over your ClipBook history: in ClipBook open Settings › Import/Export › Export History and Tags…, then choose the exported .clipbookarchive folder here. Favorites become pinned items; existing items aren’t duplicated."
+        ) {
+            SettingRow(title: "Import history", description: "From a ClipBook or Pasty .clipbookarchive export.") {
+                Button("Import…") { archive.chooseAndImport() }
+                    .buttonStyle(.shad(.outline, size: .sm))
+                    .disabled(archive.isRunning)
+            }
+            Separator()
+            SwitchRow(
+                title: "Include images when importing",
+                description: "Large archives import much faster without images.",
+                isOn: $archive.includeImages
+            )
+            Separator()
+            SettingRow(title: "Export history", description: "Saves everything, including pinned items, as a .clipbookarchive that Pasty and ClipBook can import.") {
+                Button("Export…") { archive.chooseAndExport() }
+                    .buttonStyle(.shad(.outline, size: .sm))
+                    .disabled(archive.isRunning)
+            }
+            if archive.state != .idle {
+                Separator()
+                ArchiveStatusRow(archive: archive)
+            }
+        }
+    }
+}
+
+private struct ArchiveStatusRow: View {
+    let archive: ArchiveController
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            switch archive.state {
+            case let .running(title, completed, total):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(total > 0 ? "\(title) \(completed.formatted()) of \(total.formatted())…" : "\(title)…")
+                        .font(.shadSMMedium)
+                        .foregroundStyle(Theme.foreground)
+                        .monospacedDigit()
+                    ProgressView(value: total > 0 ? Double(completed) / Double(total) : 0)
+                        .progressViewStyle(.linear)
+                        .tint(Theme.primary)
+                }
+                Button("Cancel") { archive.cancel() }
+                    .buttonStyle(.shad(.ghost, size: .sm))
+            case let .finished(message):
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.success)
+                Text(message).font(Typeface.font(12.5)).foregroundStyle(Theme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            case let .failed(message):
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.destructive)
+                Text(message).font(Typeface.font(12.5)).foregroundStyle(Theme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            case .idle:
+                EmptyView()
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 }
 

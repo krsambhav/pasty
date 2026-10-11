@@ -153,15 +153,16 @@ public actor ClipboardStore {
         return outcome
     }
 
-    private func insertRow(_ draft: ClipDraft) throws -> ClipItem.ID {
+    private func insertRow(_ draft: ClipDraft, createdAt: Date? = nil, copyCount: Int = 1, pinned: Bool = false) throws -> ClipItem.ID {
         try db.prepare("""
         INSERT INTO items (kind, is_code, pinned, created_at, updated_at, copy_count, byte_size, char_count,
             line_count, width, height, file_count, content_hash, source_bundle, source_name, title, subtitle,
             file_path, preview)
-        VALUES (?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """)
         .bind(
-            .int(draft.kind.rawValue), .bool(draft.isCode), .date(draft.date), .date(draft.date),
+            .int(draft.kind.rawValue), .bool(draft.isCode), .bool(pinned), .date(createdAt ?? draft.date), .date(draft.date),
+            .int(max(1, copyCount)),
             .int(draft.byteSize), .int(draft.characterCount), .int(draft.lineCount), .int(draft.imageWidth),
             .int(draft.imageHeight), .int(draft.fileCount), .blob(draft.contentHash),
             .optionalText(draft.source?.bundleID), .optionalText(draft.source?.name), .text(draft.title),
@@ -187,6 +188,41 @@ public actor ClipboardStore {
             .bind(.integer(id), .text(draft.searchContent), .text(meta))
             .run()
         return id
+    }
+
+    // MARK: Import
+
+    /// Imports entries from another clipboard manager in one transaction, preserving their dates,
+    /// copy counts and pinned state. Content already in history is not duplicated: the existing
+    /// entry is pinned if the imported one was, and keeps the more recent date.
+    public func importClips(_ clips: [ImportedClip]) throws -> (inserted: Int, merged: Int) {
+        try db.transaction {
+            var inserted = 0
+            var merged = 0
+            for clip in clips {
+                let existing = try db.prepare("SELECT id FROM items WHERE content_hash = ? ORDER BY updated_at DESC LIMIT 1")
+                    .bind(.blob(clip.draft.contentHash))
+                    .firstRow { $0.int64(0) }
+                if let id = existing {
+                    try db.prepare("""
+                    UPDATE items SET pinned = max(pinned, ?), updated_at = max(updated_at, ?),
+                        created_at = min(created_at, ?) WHERE id = ?
+                    """)
+                    .bind(.bool(clip.pinned), .date(clip.draft.date), .date(clip.firstCopiedAt), .integer(id))
+                    .run()
+                    merged += 1
+                } else {
+                    _ = try insertRow(clip.draft, createdAt: clip.firstCopiedAt, copyCount: clip.copyCount, pinned: clip.pinned)
+                    inserted += 1
+                }
+            }
+            return (inserted, merged)
+        }
+    }
+
+    /// Number of unpinned entries (the ones the history limit applies to).
+    public func unpinnedCount() throws -> Int {
+        try db.prepare("SELECT count(*) FROM items WHERE pinned = 0").firstRow { $0.int(0) } ?? 0
     }
 
     /// Deletes the oldest unpinned entries beyond `maxHistory`. Pinned entries never count or expire.

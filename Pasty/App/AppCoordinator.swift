@@ -9,6 +9,7 @@ final class AppCoordinator {
     let monitor: ClipboardMonitor
     let model: PanelModel
     let updater: Updater
+    let archive: ArchiveController
     let launchOptions: LaunchOptions
     private var installWhenIdleTask: Task<Void, Never>?
 
@@ -63,6 +64,7 @@ final class AppCoordinator {
         model = PanelModel(store: store, preferences: preferences)
         let feedOverride = ProcessInfo.processInfo.environment["PASTY_UPDATE_FEED"].flatMap { URL(string: $0) }
         updater = Updater(feedOverride: feedOverride)
+        archive = ArchiveController(store: store, preferences: preferences, model: model)
     }
 
     func start() {
