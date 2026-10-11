@@ -350,6 +350,22 @@ final class SmokeTest {
         check("↓ moves the selection", await waitFor(seconds: 2) { self.model.selectedIndex == (first ?? 0) + 1 })
         post(keyCode: kVK_UpArrow)
         check("↑ moves the selection", await waitFor(seconds: 2) { self.model.selectedIndex == first })
+        post(keyCode: kVK_ANSI_A, flags: .maskCommand)
+        let selectedAll = await waitFor(seconds: 2) {
+            let range = (self.panel.searchBridge.field?.currentEditor() as? NSTextView)?.selectedRange()
+            return range == NSRange(location: 0, length: self.model.query.utf16.count) && !self.model.query.isEmpty
+        }
+        check("⌘A selects all text in the search field", selectedAll)
+        typeText("fix")
+        check("typing after ⌘A replaces the selection", await waitFor(seconds: 2) { self.model.query == "fix" }, "query: \(model.query)")
+        post(keyCode: kVK_ANSI_A, flags: .maskCommand)
+        post(keyCode: kVK_ANSI_X, flags: .maskCommand)
+        check("⌘X cuts the search text", await waitFor(seconds: 2) { self.model.query.isEmpty }, "query: \(model.query)")
+        post(keyCode: kVK_ANSI_Z, flags: .maskCommand)
+        check("⌘Z undoes in the search field", await waitFor(seconds: 2) { self.model.query == "fix" }, "query: \(model.query)")
+        model.query = "selection"
+        _ = await waitFor(seconds: 2) { self.model.items.count >= 2 }
+        await settle()
         post(keyCode: kVK_Tab)
         check("Tab switches to Pinned", await waitFor(seconds: 2) { self.model.filter == .pinned })
         post(keyCode: kVK_Tab)

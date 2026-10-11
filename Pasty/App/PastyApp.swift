@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var coordinator: AppCoordinator?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.mainMenu = MainMenu.make()
         let coordinator = AppCoordinator(launchOptions: LaunchOptions(arguments: CommandLine.arguments))
         self.coordinator = coordinator
         coordinator.start()
