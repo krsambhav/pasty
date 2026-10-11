@@ -118,7 +118,7 @@ final class Statement {
         case let .text(string)?:
             sqlite3_bind_text(pointer, index, string, -1, SQLITE_TRANSIENT)
         case let .blob(data)?:
-            data.withUnsafeBytes { buffer in
+            _ = data.withUnsafeBytes { buffer in
                 // A zero-length blob must still be non-NULL to stay a blob.
                 if buffer.count == 0 {
                     sqlite3_bind_zeroblob(pointer, index, 0)
