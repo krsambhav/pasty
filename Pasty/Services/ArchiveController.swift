@@ -60,13 +60,11 @@ final class ArchiveController {
         guard !isRunning else { return }
         state = .running(title: "Importing", completed: 0, total: 0)
         let includeImages = includeImages
+        let controller = self
         task = Task { [store, weak self] in
             do {
                 let summary = try await ArchiveTransfer.importArchive(at: url, into: store, includeImages: includeImages) { progress in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.isRunning else { return }
-                        self.state = .running(title: "Importing", completed: progress.completed, total: progress.total)
-                    }
+                    Task { @MainActor in controller.report(progress, title: "Importing") }
                 }
                 await self?.finishImport(summary)
             } catch is CancellationError {
@@ -122,13 +120,11 @@ final class ArchiveController {
         guard !isRunning else { return }
         state = .running(title: "Exporting", completed: 0, total: 0)
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let controller = self
         task = Task { [store, weak self] in
             do {
                 let summary = try await ArchiveTransfer.exportArchive(from: store, to: url, appVersion: version) { progress in
-                    Task { @MainActor [weak self] in
-                        guard let self, self.isRunning else { return }
-                        self.state = .running(title: "Exporting", completed: progress.completed, total: progress.total)
-                    }
+                    Task { @MainActor in controller.report(progress, title: "Exporting") }
                 }
                 var message = "Exported \(summary.exported.formatted()) item\(summary.exported == 1 ? "" : "s") to “\(url.lastPathComponent)”."
                 if summary.skipped > 0 { message += " \(summary.skipped.formatted()) app-specific items can’t be stored in this format." }
@@ -141,6 +137,12 @@ final class ArchiveController {
             }
             self?.task = nil
         }
+    }
+
+    /// Progress arrives on background tasks and may land after completion; ignore it then.
+    private func report(_ progress: ArchiveTransfer.Progress, title: String) {
+        guard isRunning else { return }
+        state = .running(title: title, completed: progress.completed, total: progress.total)
     }
 
     private static func describe(_ error: Error) -> String {
