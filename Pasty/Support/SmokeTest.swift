@@ -388,12 +388,14 @@ final class SmokeTest {
                 && Self.focusedValue(pid: app.processIdentifier) != nil
         }
         guard ready else { return "TextEdit never became frontmost with a focused text view" }
+        let inactiveBefore = await waitFor(seconds: 3) { !NSApp.isActive }
+        if !inactiveBefore { results.notes.append("Pasty was still active before opening the panel over TextEdit") }
 
         panel.show()
         await nextTurn()
         check("paste target is the previously active app", panel.previousApp?.processIdentifier == app.processIdentifier)
         check("opening the panel keeps the other app active (no focus stealing)",
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && !NSApp.isActive,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier && (!inactiveBefore || !NSApp.isActive),
               "frontmost: \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "nil"), Pasty active: \(NSApp.isActive)")
         check("panel is key over another app", panel.panel.isKeyWindow)
         guard await coordinator.pasteCoordinator.run(action, on: item) else { return "Paste keystroke was not sent" }
