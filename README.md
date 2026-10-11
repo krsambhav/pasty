@@ -156,6 +156,24 @@ Measured on GitHub's `macos-15` runners (Apple Silicon VMs, so slower than a typ
 | Memory (physical footprint) | ~34 MB |
 | 100 rapid open/close cycles | +6.5 MB, no leak trend |
 
+**Huge entries.** These were measured end to end in the real app while a watchdog timed how late the main thread answered a ping every 5 ms (any UI stall shows up there):
+
+| 10,000 lines of code (502 KB plain, 696 KB colored RTF) and a 10 MB single-line text | Result |
+| --- | --- |
+| Worst main-thread stall: capturing / opening / previewing / ↓-flicking / searching / copying back | 5 / 26 / 29 / 14 / 5 / 25 ms |
+| Capture → in history | 170–300 ms (polling + off-main analysis) |
+| Preview ready after selecting | 95–150 ms (built off the main thread; includes a 70 ms debounce for large items) |
+| Search for text on line 10,000 | 0.3 ms in the store, 31 ms end to end |
+| Analyze / index 10k-line code | 12 ms / 13 ms (background) |
+| Paste (choose item → ⌘V sent) | 18–24 ms |
+
+How huge entries stay smooth:
+- **Analysis.** All capture work (reading, hashing, classifying, indexing up to 1M characters) runs off the main thread.
+- **Previews.** Decoding, RTF parsing and styling happen on a background task. A TextKit 2 view then lays out only the visible lines. Previews show the first 300k characters, or 50k when lines are enormous (minified code); the full content is always what gets pasted.
+- **Navigation.** Holding ↓ across large items debounces their previews and cancels stale loads.
+- **Paste.** The panel dismisses immediately, and the clipboard write and plain-text conversion happen off the main thread.
+- **Search box.** A wall of text pasted into the search field is bounded to 256 characters and 12 terms.
+
 Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVStack` with `Equatable` fixed-height rows; observation scoped so selection changes don't re-render the list content; thumbnails decoded at 160 px and cached; full images downsampled with ImageIO before display; prepared statements; and queries that skip blob columns.
 
 ## Testing
@@ -169,7 +187,7 @@ Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVSt
 - **Preferences:** defaults, persistence, corrupt stored values, clamping, an emptied exclusion list.
 - **Benchmarks:** a 10,000-entry history.
 
-**63 end-to-end checks** (`scripts/smoke-test.sh`) run against the built app on a throwaway database. With Accessibility granted, they drive real keystrokes through `CGEvent`:
+**74 end-to-end checks** (`scripts/smoke-test.sh`) run against the built app on a throwaway database. With Accessibility granted, they drive real keystrokes through `CGEvent`:
 - Fonts are registered and used.
 - Panel placement is correct on six display layouts (negative coordinates, portrait, smaller than the panel).
 - Capture works, including 20 rapid copies with no duplicates.
@@ -183,6 +201,7 @@ Techniques used: a pre-warmed panel rendered once off-screen at launch; `LazyVSt
 - Typing goes into the search field. ↑/↓, Tab and Esc work.
 - The global shortcut opens and closes the panel.
 - Pasting into TextEdit keeps TextEdit frontmost. Paste as plain text works into a rich document.
+- Large content: 10,000 lines of code (plain and colored RTF) and a 10 MB single line are captured, previewed, navigated, searched to the last line, copied back byte-exact, and pasted into TextEdit, all under a main-thread stall watchdog.
 - 100-cycle stress and leak check.
 - Idle CPU stays under 1%.
 - 19 screenshots of every surface in both appearances.
