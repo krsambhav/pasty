@@ -270,7 +270,7 @@ final class SmokeTest {
 
     private func testPermissionDenied(marker: String) async {
         guard let target = try? await store.search(marker).first(where: { $0.title == marker }) else { return }
-        let paste = coordinator.pasteCoordinator
+        let paste: PasteCoordinator = coordinator.pasteCoordinator
         paste.isAccessibilityTrusted = { false }
         copy("before denied paste")
         _ = await waitFor(seconds: 3) { await self.isRecorded("before denied paste") }

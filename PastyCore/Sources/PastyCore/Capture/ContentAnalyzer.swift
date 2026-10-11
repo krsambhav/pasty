@@ -109,9 +109,9 @@ public enum ContentAnalyzer {
             return analyzeImage(image.data, snapshot: snapshot, byteSize: byteSize, generateThumbnail: generateThumbnail)
         }
 
-        guard let text, !trimmed.isEmpty else {
-            return analyzeOther(snapshot, byteSize: byteSize)
-        }
+        // No readable text at all: keep it as opaque data. Readable but blank text: ignore it.
+        guard let text else { return analyzeOther(snapshot, byteSize: byteSize) }
+        guard !trimmed.isEmpty else { return nil }
 
         if let url = detectURL(in: trimmed) {
             return analyzeURL(url, text: trimmed, snapshot: snapshot, byteSize: byteSize)
