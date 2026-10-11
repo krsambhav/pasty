@@ -45,7 +45,9 @@ final class FileThumbnails {
             representationTypes: .thumbnail
         )
         let generated: UncheckedSendable<CGImage>? = await withCheckedContinuation { continuation in
-            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { representation, _ in
+            // @Sendable: QuickLook calls this on a background queue, so it must not inherit the
+            // main-actor isolation of the surrounding code (Swift 6 would trap at runtime).
+            QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { @Sendable representation, _ in
                 continuation.resume(returning: representation.map { UncheckedSendable(value: $0.cgImage) })
             }
         }

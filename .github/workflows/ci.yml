@@ -58,6 +58,26 @@ jobs:
           codesign -dv --verbose=2 "$APP" 2>&1 || true
       - name: Smoke test (launch, capture, panel timing)
         run: scripts/smoke-test.sh build/Release/Pasty.app
+      - name: Crash report (on failure)
+        if: failure()
+        run: |
+          REPORT=$(ls -t ~/Library/Logs/DiagnosticReports/Pasty* 2>/dev/null | head -1 || true)
+          if [[ -n "$REPORT" ]]; then
+            python3 - "$REPORT" <<'PY'
+          import json, sys
+          text = open(sys.argv[1]).read()
+          header, _, body = text.partition("\n")
+          report = json.loads(body)
+          print(json.dumps(report.get("exception"), indent=1), report.get("termination", {}).get("indicator"))
+          crashed = report["threads"][report.get("faultingThread", 0)]
+          images = report.get("usedImages", [])
+          for frame in crashed["frames"][:25]:
+              image = images[frame["imageIndex"]].get("name", "?") if frame.get("imageIndex") is not None else "?"
+              print(image, frame.get("symbol", "?"), frame.get("sourceFile", ""), frame.get("sourceLine", ""))
+          PY
+          else
+            echo "No crash report found"
+          fi
       - name: Upload app
         uses: actions/upload-artifact@v4
         with:
