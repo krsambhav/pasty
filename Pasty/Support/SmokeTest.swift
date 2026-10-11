@@ -814,7 +814,7 @@ final class SmokeTest {
         var batch: [ImportedClip] = []
         batch.reserveCapacity(5_000)
         for index in 0..<bulk {
-            var draft = ContentAnalyzer.text("\(phrases[index % phrases.count]) · bulk \(index)", date: oldest.addingTimeInterval(-Double(index) * 7))
+            var draft = ClipDraft.text("\(phrases[index % phrases.count]) · bulk \(index)", date: oldest.addingTimeInterval(-Double(index) * 7))
             draft.source = SourceApp(bundleID: sources[index % sources.count].0, name: sources[index % sources.count].1)
             batch.append(ImportedClip(draft: draft, firstCopiedAt: draft.date, copyCount: 1, pinned: index % 50_000 == 0))
             if batch.count == 5_000 || index == bulk - 1 {
