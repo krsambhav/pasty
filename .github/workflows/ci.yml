@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: PastyCore tests & benchmarks
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sqlite3 --version
+      - name: Test
+        run: swift test --package-path PastyCore 2>&1 | tee core-tests.log
+      - name: Benchmarks
+        if: always()
+        run: grep '\[benchmark\]' core-tests.log || true
+
+  app:
+    name: Build Pasty.app (universal)
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: scripts/build-app.sh
+      - name: Verify bundle
+        run: |
+          APP=build/Release/Pasty.app
+          lipo -archs "$APP/Contents/MacOS/Pasty"
+          lipo -archs "$APP/Contents/MacOS/Pasty" | grep -q arm64
+          lipo -archs "$APP/Contents/MacOS/Pasty" | grep -q x86_64
+          plutil -p "$APP/Contents/Info.plist"
+          ls -la "$APP/Contents/Resources"
+          codesign -dv --verbose=2 "$APP" 2>&1 || true
+      - name: Smoke test (launch, capture, panel timing)
+        run: scripts/smoke-test.sh build/Release/Pasty.app
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pasty-app
+          path: build/Pasty.zip
+      - name: Upload smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-results
+          path: build/smoke/
