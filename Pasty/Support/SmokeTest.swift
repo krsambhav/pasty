@@ -83,6 +83,8 @@ final class SmokeTest {
             results.notes.append("Accessibility not granted: keystroke, hotkey and paste-into-app checks skipped.")
         }
         await testLargeContent()
+        await testUpdater()
+        await testFilePreview()
         await testStress()
         await captureScreenshots()
         await measureIdle()
@@ -577,6 +579,122 @@ final class SmokeTest {
         }
     }
 
+    // MARK: - Updates
+
+    /// Builds a fake newer release from this very app, then checks the updater accepts it, rejects
+    /// a bad checksum and an older build, and that the install script swaps and rolls back bundles.
+    private func testUpdater() async {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("pasty-update-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: root) }
+        let currentBuild = Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 1
+        let newBuild = currentBuild + 1
+
+        func shell(_ tool: String, _ arguments: [String]) -> Bool {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return false }
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
+
+        // A copy of this app, re-versioned and re-signed ad hoc, zipped like CI does.
+        let fake = root.appendingPathComponent("fake/Pasty.app", isDirectory: true)
+        try? fm.createDirectory(at: fake.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard shell("/usr/bin/ditto", [Bundle.main.bundlePath, fake.path]),
+              shell("/usr/bin/plutil", ["-replace", "CFBundleVersion", "-string", "\(newBuild)", fake.appendingPathComponent("Contents/Info.plist").path]),
+              shell("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", fake.path]) else {
+            return check("updater fixture", false)
+        }
+        let zip = root.appendingPathComponent("Pasty.zip")
+        guard shell("/usr/bin/ditto", ["-c", "-k", "--keepParent", fake.path, zip.path]),
+              let digest = try? UpdateFeed.sha256Hex(ofFileAt: zip) else { return check("updater archive", false) }
+        let goodSum = root.appendingPathComponent("good.sha256")
+        let badSum = root.appendingPathComponent("bad.sha256")
+        try? "\(digest)  Pasty.zip\n".write(to: goodSum, atomically: true, encoding: .utf8)
+        try? (String(repeating: "0", count: 64) + "  Pasty.zip\n").write(to: badSum, atomically: true, encoding: .utf8)
+
+        func feed(build: Int, checksum: URL) -> URL {
+            let json = """
+            {"tag_name":"v1.0.\(build)","body":"Smoke","draft":false,"prerelease":false,"assets":[
+              {"name":"Pasty.zip","browser_download_url":"\(zip.absoluteString)","size":1},
+              {"name":"Pasty.zip.sha256","browser_download_url":"\(checksum.absoluteString)","size":1}]}
+            """
+            let url = root.appendingPathComponent("feed-\(build)-\(checksum.lastPathComponent).json")
+            try? json.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        }
+
+        let older = Updater(feedOverride: feed(build: max(1, currentBuild - 1), checksum: goodSum))
+        await older.check(userInitiated: true)
+        check("updater: an older or equal release is ignored", older.phase == .upToDate, "\(older.phase)")
+
+        let tampered = Updater(feedOverride: feed(build: newBuild, checksum: badSum))
+        await tampered.check(userInitiated: true)
+        check("updater: a download with a wrong checksum is rejected", {
+            if case let .failed(message) = tampered.phase { return message.contains("checksum") }
+            return false
+        }(), "\(tampered.phase)")
+
+        let good = Updater(feedOverride: feed(build: newBuild, checksum: goodSum))
+        let started = ContinuousClock.now
+        await good.check(userInitiated: true)
+        results.largeContent["update download + verify ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
+        if CodeSignature.isCertificateSigned {
+            // This copy is certificate-signed: an ad-hoc build must not be accepted as an update.
+            check("updater: builds from another signer are rejected", {
+                if case let .failed(message) = good.phase { return message.contains("same developer") }
+                return false
+            }(), "\(good.phase)")
+        } else {
+            check("updater: a valid newer release is downloaded, verified and staged", good.phase == .ready("1.0.\(newBuild)"), "\(good.phase)")
+        }
+
+        // The install script: swap, and roll back when the new bundle is missing.
+        let script = root.appendingPathComponent("install.sh")
+        try? Updater.installScript.write(to: script, atomically: true, encoding: .utf8)
+        let target = root.appendingPathComponent("Installed/Pasty.app", isDirectory: true)
+        let staged = root.appendingPathComponent("Staged/Pasty.app", isDirectory: true)
+        for (dir, marker) in [(target, "old"), (staged, "new")] {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? marker.write(to: dir.appendingPathComponent("marker"), atomically: true, encoding: .utf8)
+        }
+        let waiter = Process()
+        waiter.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        waiter.arguments = ["0.3"]
+        try? waiter.run()
+        let swapped = shell("/bin/sh", [script.path, "\(waiter.processIdentifier)", target.path, staged.path, "no"])
+        let marker = try? String(contentsOf: target.appendingPathComponent("marker"), encoding: .utf8)
+        check("install script replaces the app after Pasty quits", swapped && marker == "new" && !fm.fileExists(atPath: target.path + ".pasty-previous"), "marker: \(marker ?? "nil")")
+        _ = shell("/bin/sh", [script.path, "999999", target.path, root.appendingPathComponent("missing.app").path, "no"])
+        let afterFailure = try? String(contentsOf: target.appendingPathComponent("marker"), encoding: .utf8)
+        check("install script rolls back when the new app is missing", afterFailure == "new")
+    }
+
+    // MARK: - File previews
+
+    /// A copied screenshot file (as CleanShot copies it) gets a real image thumbnail.
+    private func testFilePreview() async {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("CleanShot smoke \(UUID().uuidString.prefix(6))@2x.png")
+        try? Self.demoImage().write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let started = ContinuousClock.now
+        let thumbnail = await FileThumbnails.shared.thumbnail(path: url.path, size: 640)
+        results.largeContent["file thumbnail (QuickLook) ms"] = ((ContinuousClock.now - started).milliseconds * 10).rounded() / 10
+        check("copied image file gets a real preview", thumbnail != nil)
+        let size = await FileThumbnails.shared.pixelSize(path: url.path)
+        check("copied image file reports its pixel size", size == CGSize(width: 1_200, height: 760), "\(String(describing: size))")
+        check("image files are recognised for content previews", ClipIcon.hasContentPreview(url.path))
+        check("apps keep their icon", !ClipIcon.hasContentPreview("/Applications/Safari.app"))
+
+        pasteboard.clearContents()
+        pasteboard.writeObjects([url as NSURL])
+        check("copied file is recorded", await waitFor(seconds: 5) { self.model.items.first?.filePath == url.path })
+    }
+
     // MARK: - Stress & idle
 
     private func testStress() async {
@@ -626,7 +744,9 @@ final class SmokeTest {
         await screenshotPanel("panel-search-light", appearance: .aqua, query: "swift") { _ in true }
         await screenshotPanel("panel-image-dark", appearance: .darkAqua) { $0.kind == .image }
         await screenshotPanel("panel-color-light", appearance: .aqua) { $0.title.hasPrefix("#") }
-        await screenshotPanel("panel-files-dark", appearance: .darkAqua) { $0.kind == .file }
+        await screenshotPanel("panel-files-dark", appearance: .darkAqua) { $0.kind == .file && $0.fileCount > 1 }
+        await screenshotPanel("panel-imagefile-light", appearance: .aqua) { $0.title.hasPrefix("CleanShot") }
+        await screenshotPanel("panel-imagefile-dark", appearance: .darkAqua) { $0.title.hasPrefix("CleanShot") }
         await screenshotPanel("panel-nomatch-light", appearance: .aqua, query: "nothing matches this") { _ in false }
 
         // Toast.
@@ -652,7 +772,7 @@ final class SmokeTest {
             window.close()
         }
         NSApp.appearance = nil
-        check("screenshots captured", results.screenshots.count >= 15, "\(results.screenshots.count)")
+        check("screenshots captured", results.screenshots.count >= 17, "\(results.screenshots.count)")
     }
 
     private func screenshotPanel(_ name: String, appearance: NSAppearance.Name, query: String = "", select: (ClipItem) -> Bool) async {
@@ -692,12 +812,17 @@ final class SmokeTest {
             return panel
         }
         """
+        let screenshotDir = FileManager.default.temporaryDirectory.appendingPathComponent("PastyDemo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: screenshotDir, withIntermediateDirectories: true)
+        let screenshot = screenshotDir.appendingPathComponent("CleanShot 2026-10-11 at 4.33.04 PM@2x.png")
+        try? Self.demoImage().write(to: screenshot)
         let files = [URL(fileURLWithPath: "/Applications/Safari.app"), URL(fileURLWithPath: "/System/Applications/TextEdit.app"), URL(fileURLWithPath: "/System/Applications/Notes.app")]
         let entries: [(PasteboardSnapshot, String, String, TimeInterval, Bool)] = [
             (snapshot([(PasteboardType.string, Data("Quarterly planning notes — draft 3".utf8))]), "com.apple.Notes", "Notes", 60 * 60 * 24 * 9, false),
             (snapshot([(PasteboardType.string, Data("Ship the release notes before Friday's sync".utf8))]), "com.apple.Notes", "Notes", 60 * 60 * 26, false),
             (PasteboardSnapshot(items: files.map { PasteboardItemSnapshot(representations: [PasteboardRepresentation(type: PasteboardType.fileURL, data: Data($0.absoluteString.utf8))]) }), "com.apple.finder", "Finder", 60 * 60 * 5, false),
             (snapshot([(PasteboardType.string, Data("#5B5BD6".utf8))]), "com.apple.Safari", "Safari", 60 * 50, false),
+            (snapshot([(PasteboardType.fileURL, Data(screenshot.absoluteString.utf8))]), "com.apple.finder", "Finder", 60 * 2, false),
             (snapshot([(PasteboardType.png, Self.demoImage())]), "com.apple.Preview", "Preview", 60 * 31, false),
             (snapshot([(PasteboardType.string, Data("https://ui.shadcn.com/docs/components/command".utf8))]), "com.apple.Safari", "Safari", 60 * 12, true),
             (snapshot([(PasteboardType.string, Data("swift test --package-path PastyCore".utf8))]), "com.apple.Terminal", "Terminal", 60 * 4, false),

@@ -218,7 +218,7 @@ struct PrivacySettingsView: View {
                     Text("Your history never leaves this Mac")
                         .font(.shadSMSemibold)
                         .foregroundStyle(Theme.foreground)
-                    Text("Pasty makes no network requests. No accounts, sync, telemetry or analytics.")
+                    Text("No accounts, sync, telemetry or analytics. The only network request is the update check to GitHub, which you can turn off in About.")
                         .font(Typeface.font(12.5))
                         .foregroundStyle(Theme.mutedForeground)
                 }
@@ -370,7 +370,10 @@ private struct ExcludedAppRow: View {
 // MARK: - About
 
 struct AboutSettingsView: View {
+    let coordinator: AppCoordinator
+
     var body: some View {
+        @Bindable var preferences = coordinator.preferences
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 16) {
                 Image(nsImage: NSApp.applicationIconImage)
@@ -383,6 +386,27 @@ struct AboutSettingsView: View {
             }
             .padding(.bottom, 24)
 
+            SettingsSection(title: "Updates", footer: "Pasty checks GitHub for new releases every few hours. Only the version check and the download leave your Mac — never your clipboard.") {
+                SwitchRow(
+                    title: "Update automatically",
+                    description: "Download new versions in the background and install them when Pasty is idle.",
+                    isOn: $preferences.autoUpdate
+                )
+                Separator()
+                SettingRow(title: updateTitle, description: updateDetail) {
+                    HStack(spacing: 8) {
+                        if case .ready = coordinator.updater.phase {
+                            Button("Restart to Update") { coordinator.restartToUpdate() }
+                                .buttonStyle(.shad(.primary, size: .sm))
+                        } else {
+                            Button(isBusy ? "Checking…" : "Check Now") { coordinator.checkForUpdates() }
+                                .buttonStyle(.shad(.outline, size: .sm))
+                                .disabled(isBusy || coordinator.updater.unsupportedReason != nil)
+                        }
+                    }
+                }
+            }
+
             SettingsSection(title: "Acknowledgements") {
                 SettingRow(title: "Plus Jakarta Sans", description: "Typeface by Tokotype, licensed under the SIL Open Font License 1.1.") {
                     EmptyView()
@@ -392,6 +416,35 @@ struct AboutSettingsView: View {
                     EmptyView()
                 }
             }
+        }
+    }
+
+    private var isBusy: Bool {
+        switch coordinator.updater.phase {
+        case .checking, .downloading, .installing: true
+        default: false
+        }
+    }
+
+    private var updateTitle: String {
+        switch coordinator.updater.phase {
+        case .idle, .upToDate: "Pasty is up to date"
+        case .checking: "Checking for updates…"
+        case let .downloading(version): "Downloading \(version)…"
+        case let .ready(version): "Version \(version) is ready"
+        case let .installing(version): "Installing \(version)…"
+        case .failed: "Update failed"
+        }
+    }
+
+    private var updateDetail: String {
+        if let reason = coordinator.updater.unsupportedReason { return reason }
+        switch coordinator.updater.phase {
+        case let .failed(message): return message
+        case .ready: return coordinator.preferences.autoUpdate ? "Installs automatically when Pasty is idle." : "Restart Pasty to finish updating."
+        default:
+            guard let checked = coordinator.updater.lastChecked else { return "Not checked yet." }
+            return "Last checked \(checked.formatted(.relative(presentation: .named)))."
         }
     }
 

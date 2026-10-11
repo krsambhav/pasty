@@ -68,6 +68,7 @@ public final class Preferences {
         static let skipLikelySecrets = "skipLikelySecrets"
         static let pasteOnSelect = "pasteOnSelect"
         static let hasLaunchedBefore = "hasLaunchedBefore"
+        static let autoUpdate = "autoUpdate"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -87,6 +88,8 @@ public final class Preferences {
     /// Return pastes into the frontmost app when true; otherwise it only copies.
     public var pasteOnSelect: Bool { didSet { save(pasteOnSelect, Key.pasteOnSelect) } }
     public var hasLaunchedBefore: Bool { didSet { save(hasLaunchedBefore, Key.hasLaunchedBefore) } }
+    /// Download and install new releases in the background.
+    public var autoUpdate: Bool { didSet { save(autoUpdate, Key.autoUpdate) } }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -103,6 +106,7 @@ public final class Preferences {
         skipLikelySecrets = defaults.bool(forKey: Key.skipLikelySecrets)
         pasteOnSelect = defaults.object(forKey: Key.pasteOnSelect) as? Bool ?? true
         hasLaunchedBefore = defaults.bool(forKey: Key.hasLaunchedBefore)
+        autoUpdate = defaults.object(forKey: Key.autoUpdate) as? Bool ?? true
     }
 
     /// The subset of preferences the clipboard monitor needs, as a value it can own.

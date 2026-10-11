@@ -371,6 +371,15 @@ public enum ImageTools {
         return (width, height)
     }
 
+    /// Pixel dimensions of an image file, read from its header (the pixels are never decoded).
+    public static func pixelSize(ofFileAt url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        return (width, height)
+    }
+
     /// A downsampled CGImage, decoded directly at the target size.
     public static func downsample(_ data: Data, maxPixelSize: Int) -> CGImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary

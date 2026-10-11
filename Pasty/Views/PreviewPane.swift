@@ -204,28 +204,7 @@ private struct FilesPreview: View {
 
     var body: some View {
         if urls.count == 1, let url = urls.first {
-            VStack(spacing: 8) {
-                Image(nsImage: IconCache.shared.fileIcon(path: url.path))
-                    .resizable()
-                    .frame(width: 64, height: 64)
-                    .padding(.bottom, 4)
-                Text(url.lastPathComponent)
-                    .font(Typeface.font(15, .semibold))
-                    .foregroundStyle(Theme.foreground)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                Text(url.deletingLastPathComponent().path(percentEncoded: false))
-                    .font(.shadXS)
-                    .foregroundStyle(Theme.mutedForeground)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
-                    .textSelection(.enabled)
-                if !FileManager.default.fileExists(atPath: url.path) {
-                    Badge(text: "No longer at this location", variant: .destructive, symbol: "exclamationmark.triangle.fill")
-                        .padding(.top, 6)
-                }
-            }
-            .padding(24)
+            SingleFilePreview(url: url)
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -258,6 +237,80 @@ private struct FilesPreview: View {
                 .padding(16)
             }
             .scrollIndicators(.hidden)
+        }
+    }
+}
+
+/// One copied file: a real QuickLook preview (screenshots, photos, PDFs, video…) when one exists,
+/// otherwise the Finder icon, with its name, location and image size.
+private struct SingleFilePreview: View {
+    let url: URL
+    @State private var preview: NSImage?
+    @State private var pixelSize: CGSize?
+    @State private var loaded = false
+
+    private var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Group {
+                if let preview {
+                    Image(nsImage: preview)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.radiusMedium, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityLabel("Preview of \(url.lastPathComponent)")
+                } else if loaded || !ClipIcon.hasContentPreview(url.path) {
+                    Image(nsImage: IconCache.shared.fileIcon(path: url.path))
+                        .resizable()
+                        .frame(width: 64, height: 64)
+                        .frame(maxHeight: .infinity)
+                } else {
+                    // Reserve the space while QuickLook renders, so nothing jumps.
+                    Color.clear.frame(maxHeight: .infinity)
+                }
+            }
+            .padding(.top, 4)
+
+            VStack(spacing: 4) {
+                Text(url.lastPathComponent)
+                    .font(Typeface.font(14, .semibold))
+                    .foregroundStyle(Theme.foreground)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                HStack(spacing: 6) {
+                    if let pixelSize {
+                        Badge(text: "\(Int(pixelSize.width)) × \(Int(pixelSize.height))", variant: .outline)
+                    }
+                    Text(url.deletingLastPathComponent().path(percentEncoded: false))
+                        .font(.shadXS)
+                        .foregroundStyle(Theme.mutedForeground)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+                if !exists {
+                    Badge(text: "No longer at this location", variant: .destructive, symbol: "exclamationmark.triangle.fill")
+                        .padding(.top, 4)
+                }
+            }
+        }
+        .padding(16)
+        .task(id: url) {
+            preview = FileThumbnails.shared.cached(path: url.path, size: 640)
+            pixelSize = nil
+            loaded = false
+            guard exists, ClipIcon.hasContentPreview(url.path) else { loaded = true; return }
+            let loadedImage = await FileThumbnails.shared.thumbnail(path: url.path, size: 640)
+            let loadedSize = await FileThumbnails.shared.pixelSize(path: url.path)
+            guard !Task.isCancelled else { return }
+            preview = loadedImage
+            pixelSize = loadedSize
+            loaded = true
         }
     }
 }

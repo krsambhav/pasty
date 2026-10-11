@@ -8,6 +8,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let menu = NSMenu()
     private let openItem = NSMenuItem(title: "Open Pasty", action: #selector(openPasty), keyEquivalent: "")
     private let pauseItem = NSMenuItem(title: "Pause Clipboard Monitoring", action: #selector(togglePause), keyEquivalent: "")
+    private let updateItem = NSMenuItem(title: "Restart to Update", action: #selector(restartToUpdate), keyEquivalent: "")
+    private let checkUpdatesItem = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
 
     var isVisible: Bool {
         get { statusItem.isVisible }
@@ -26,7 +28,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.toolTip = "Pasty"
         }
 
-        for item in [openItem, pauseItem] { item.target = self }
+        for item in [openItem, pauseItem, updateItem, checkUpdatesItem] { item.target = self }
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: ",")
         settingsItem.target = self
         let quitItem = NSMenuItem(title: "Quit Pasty", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -34,6 +36,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(openItem)
         menu.addItem(pauseItem)
         menu.addItem(.separator())
+        menu.addItem(updateItem)
+        menu.addItem(checkUpdatesItem)
         menu.addItem(settingsItem)
         menu.addItem(.separator())
         menu.addItem(quitItem)
@@ -46,6 +50,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func refresh() {
         let paused = coordinator.preferences.isPaused
         pauseItem.title = paused ? "Resume Clipboard Monitoring" : "Pause Clipboard Monitoring"
+        if case let .ready(version) = coordinator.updater.phase {
+            updateItem.title = "Restart to Update to \(version)"
+            updateItem.isHidden = false
+        } else {
+            updateItem.isHidden = true
+        }
+        checkUpdatesItem.isHidden = coordinator.updater.unsupportedReason != nil
         statusItem.button?.image = MenuBarIcon.image(paused: paused)
         statusItem.button?.appearsDisabled = false
 
@@ -77,6 +88,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func togglePause() {
         coordinator.setPaused(!coordinator.preferences.isPaused)
+    }
+
+    @objc private func restartToUpdate() {
+        coordinator.restartToUpdate()
+    }
+
+    @objc private func checkForUpdates() {
+        coordinator.checkForUpdates()
     }
 
     @objc private func openSettings() {

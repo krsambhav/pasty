@@ -39,6 +39,7 @@ public final class ClipboardMonitor: @unchecked Sendable {
         pasteboard: NSPasteboard,
         rules: CaptureRules,
         ownBundleID: String? = Bundle.main.bundleIdentifier,
+        captureExistingContent: Bool = false,
         sourceProvider: @escaping SourceProvider,
         handler: @escaping Handler
     ) {
@@ -47,8 +48,9 @@ public final class ClipboardMonitor: @unchecked Sendable {
         self.ownBundleID = ownBundleID
         self.sourceProvider = sourceProvider
         self.handler = handler
-        // Whatever is on the pasteboard at launch was already there; don't re-record it.
-        lastChangeCount = pasteboard.changeCount
+        // Whatever is on the pasteboard at launch was already there; don't re-record it — unless
+        // we were just relaunched by an update and may have missed a copy during the restart.
+        lastChangeCount = captureExistingContent ? Int.min : pasteboard.changeCount
     }
 
     deinit {

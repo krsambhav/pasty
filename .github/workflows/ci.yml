@@ -38,7 +38,14 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - name: Import signing identity (if configured)
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+        run: scripts/import-signing-identity.sh
       - name: Build
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: scripts/build-app.sh
       - name: Verify bundle
         run: |
@@ -55,10 +62,40 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Pasty-app
-          path: build/Pasty.zip
+          path: |
+            build/Pasty.zip
+            build/Pasty.zip.sha256
       - name: Upload smoke results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-results
           path: build/smoke/
+
+  release:
+    name: Publish GitHub release
+    needs: [core-tests, app]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Pasty-app
+          path: dist
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v1.0.${{ github.run_number }}
+        run: |
+          cd dist
+          sha256sum -c Pasty.zip.sha256
+          {
+            echo "Automatic build of ${GITHUB_SHA::7}. Installed copies update themselves in the background."
+            echo
+            echo "Install: \`curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/Pasty.zip -o /tmp/Pasty.zip && ditto -xk /tmp/Pasty.zip /Applications && open /Applications/Pasty.app\`"
+          } > notes.md
+          gh release create "$TAG" Pasty.zip Pasty.zip.sha256 \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Pasty ${TAG#v}" --notes-file notes.md --latest

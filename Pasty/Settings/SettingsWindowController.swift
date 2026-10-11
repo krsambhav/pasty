@@ -22,7 +22,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         case .general: "Shortcut, startup and appearance."
         case .clipboard: "What Pasty keeps, and for how long."
         case .privacy: "What Pasty never records."
-        case .about: "Version and acknowledgements."
+        case .about: "Version, updates and acknowledgements."
         }
     }
 
@@ -101,7 +101,7 @@ struct SettingsRootView: View {
                     case .general: GeneralSettingsView(coordinator: coordinator)
                     case .clipboard: ClipboardSettingsView(coordinator: coordinator)
                     case .privacy: PrivacySettingsView(coordinator: coordinator)
-                    case .about: AboutSettingsView()
+                    case .about: AboutSettingsView(coordinator: coordinator)
                     }
                 }
                 .padding(.horizontal, 32)

@@ -8,7 +8,9 @@ final class AppCoordinator {
     let store: ClipboardStore
     let monitor: ClipboardMonitor
     let model: PanelModel
+    let updater: Updater
     let launchOptions: LaunchOptions
+    private var installWhenIdleTask: Task<Void, Never>?
 
     private(set) var panelController: PanelController!
     private(set) var pasteCoordinator: PasteCoordinator!
@@ -54,10 +56,13 @@ final class AppCoordinator {
         monitor = ClipboardMonitor(
             pasteboard: .general,
             rules: preferences.captureRules,
+            captureExistingContent: launchOptions.afterUpdate,
             sourceProvider: SourceAppResolver.resolve,
             handler: { draft in continuation.yield(draft) }
         )
         model = PanelModel(store: store, preferences: preferences)
+        let feedOverride = ProcessInfo.processInfo.environment["PASTY_UPDATE_FEED"].flatMap { URL(string: $0) }
+        updater = Updater(feedOverride: feedOverride)
     }
 
     func start() {
@@ -88,7 +93,14 @@ final class AppCoordinator {
                 await SmokeTest(coordinator: self, output: smokeOutput).run()
                 return
             }
-            if let storeOpenError {
+            if launchOptions.smokeTestOutput == nil {
+                updater.onReady = { [weak self] update in self?.updateReady(update) }
+                updater.automaticChecksEnabled = { [weak self] in self?.preferences.autoUpdate ?? false }
+                updater.start()
+            }
+            if launchOptions.afterUpdate {
+                hud.show(.init(symbol: "checkmark.circle", title: "Pasty updated", detail: "You’re now on version \(updater.currentVersion)."), duration: 2.5)
+            } else if let storeOpenError {
                 hud.show(.init(symbol: "exclamationmark.triangle", title: "History unavailable", detail: "Pasty is keeping this session's history in memory. \(storeOpenError.localizedDescription)"))
             } else if !preferences.hasLaunchedBefore {
                 preferences.hasLaunchedBefore = true
@@ -98,6 +110,7 @@ final class AppCoordinator {
     }
 
     func stop() {
+        updater.stop()
         monitor.stop()
         ingestTask?.cancel()
         captureContinuation.finish()
@@ -169,6 +182,7 @@ final class AppCoordinator {
         applyAppearance()
         applyHotKey()
         model.isPaused = preferences.isPaused
+        if preferences.autoUpdate, case .ready = updater.phase { installWhenIdle() }
         let limit = preferences.maxHistory
         Task {
             try? await store.enforceLimit(maxHistory: limit)
@@ -206,6 +220,64 @@ final class AppCoordinator {
             settingsController = SettingsWindowController(coordinator: self)
         }
         settingsController?.show()
+    }
+
+    // MARK: Updates
+
+    private func updateReady(_ update: AvailableUpdate) {
+        statusItemController?.refresh()
+        if preferences.autoUpdate { installWhenIdle() }
+    }
+
+    /// Installs a staged update the next time Pasty isn't being used: panel closed and no
+    /// Pasty window in front. Checked every 30 seconds.
+    func installWhenIdle() {
+        guard installWhenIdleTask == nil else { return }
+        installWhenIdleTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard case .ready = updater.phase, preferences.autoUpdate else {
+                    installWhenIdleTask = nil
+                    return
+                }
+                if isIdle {
+                    installWhenIdleTask = nil
+                    updater.installAndRelaunch()
+                    return
+                }
+                try? await Task.sleep(for: .seconds(30))
+            }
+        }
+    }
+
+    private var isIdle: Bool {
+        !panelController.isVisible
+            && !NSApp.windows.contains { $0.isVisible && $0.level == .normal && $0.canBecomeMain }
+    }
+
+    /// From the menu bar or Settings: install right away.
+    func restartToUpdate() {
+        panelController.hide()
+        updater.installAndRelaunch()
+    }
+
+    func checkForUpdates() {
+        Task {
+            let found = await updater.check(userInitiated: true)
+            statusItemController?.refresh()
+            if found == nil {
+                switch updater.phase {
+                case let .failed(message):
+                    hud.show(.init(symbol: "exclamationmark.triangle", title: "Couldn’t check for updates", detail: message))
+                case .upToDate:
+                    hud.show(.init(symbol: "checkmark.circle", title: "Pasty is up to date", detail: "Version \(updater.currentVersion)"), duration: 1.6)
+                case let .ready(version):
+                    hud.show(.init(symbol: "arrow.down.circle", title: "Update \(version) is ready", detail: "It installs automatically when Pasty is idle."))
+                default:
+                    break
+                }
+            }
+        }
     }
 
     // MARK: System events

@@ -1,6 +1,7 @@
 import AppKit
 import PastyCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ClipListView: View {
     let model: PanelModel
@@ -187,10 +188,21 @@ struct ClipIcon: View {
                 RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous)
                     .strokeBorder(Theme.border, lineWidth: 0.5)
             case .file:
-                Image(nsImage: IconCache.shared.fileIcon(path: item.filePath ?? "/"))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 22, height: 22)
+                if let image = thumbnail ?? FileThumbnails.shared.cached(path: item.filePath ?? "", size: 48) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: 24, height: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous))
+                    RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous)
+                        .strokeBorder(Theme.border, lineWidth: 0.5)
+                } else {
+                    Image(nsImage: IconCache.shared.fileIcon(path: item.filePath ?? "/"))
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 22, height: 22)
+                }
             default:
                 if item.lineCount == 1, let color = ColorParser.parse(item.title) {
                     RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous)
@@ -207,12 +219,28 @@ struct ClipIcon: View {
         .frame(width: 24, height: 24)
         .accessibilityHidden(true)
         .task(id: item.id) {
-            guard item.kind == .image, thumbnail == nil else { return }
-            thumbnail = await thumbnails.load(item.id)
+            guard thumbnail == nil else { return }
+            switch item.kind {
+            case .image:
+                thumbnail = await thumbnails.load(item.id)
+            case .file:
+                // Only for content previews (images, PDFs, video…); apps and folders keep their icon.
+                if let path = item.filePath, Self.hasContentPreview(path) {
+                    thumbnail = await FileThumbnails.shared.thumbnail(path: path, size: 48)
+                }
+            default:
+                break
+            }
         }
     }
 
     private var symbol: String { item.symbolName }
+
+    /// Files whose QuickLook thumbnail shows their content rather than an icon.
+    static func hasContentPreview(_ path: String) -> Bool {
+        guard let type = UTType(filenameExtension: URL(fileURLWithPath: path).pathExtension) else { return false }
+        return [UTType.image, .pdf, .movie, .presentation, .spreadsheet, .text].contains { type.conforms(to: $0) }
+    }
 }
 
 /// Single-line text with search matches emphasized.

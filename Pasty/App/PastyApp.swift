@@ -40,10 +40,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct LaunchOptions {
     /// `--smoke-test <dir>`: run the automated end-to-end check, write results to `dir`, quit.
     var smokeTestOutput: URL?
+    /// Set by the update installer when it relaunches Pasty.
+    var afterUpdate = false
 
     init(arguments: [String]) {
         if let index = arguments.firstIndex(of: "--smoke-test"), arguments.indices.contains(index + 1) {
             smokeTestOutput = URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
         }
+        afterUpdate = arguments.contains("--after-update")
     }
 }
