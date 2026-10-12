@@ -7,23 +7,8 @@ import SwiftUI
 /// A borderless, non-activating panel. It takes keyboard focus *without* activating Pasty, so
 /// the app the user was working in stays frontmost — which is what makes paste-back seamless.
 final class PastyPanel: NSPanel {
-    weak var quickLook: QuickLookController?
-
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
-
-    // Quick Look finds its controller through the key window's responder chain.
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
-        MainActor.assumeIsolated { quickLook != nil }
-    }
-
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        MainActor.assumeIsolated { quickLook?.beginControl(panel) }
-    }
-
-    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        MainActor.assumeIsolated { quickLook?.endControl(panel) }
-    }
 }
 
 /// Holds a reference to the AppKit search field created inside SwiftUI, so focus can be set
@@ -69,8 +54,6 @@ final class PanelController: NSObject, NSWindowDelegate {
         )
         quickLook = QuickLookController(store: model.store, host: panel)
         super.init()
-        panel.quickLook = quickLook
-        quickLook.onFocusLost = { [weak self] in self?.hide() }
         model.onSelectionChange = { [weak self] item in self?.quickLook.follow(item) }
         configurePanel()
     }
@@ -182,10 +165,16 @@ final class PanelController: NSObject, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         // Clicking anywhere outside dismisses — but not while a context menu is tracking.
         guard panel.isVisible else { return }
+        // Quick Look can't hold focus while Pasty isn't the active app, but it still takes it
+        // from the panel as it appears or is clicked. Unless the user clicked elsewhere, take it back.
+        let reclaim = quickLook.isVisible && quickLook.tookFocus
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                // Quick Look taking focus (the user clicked into it) keeps Pasty open.
-                guard let self, !self.panel.isKeyWindow, !self.quickLook.isKey else { return }
+                guard let self, !self.panel.isKeyWindow else { return }
+                if reclaim {
+                    self.panel.makeKey()
+                    return
+                }
                 self.hide()
             }
         }

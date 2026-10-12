@@ -72,10 +72,22 @@ final class SettingsWindowController: NSWindowController {
         guard let window else { return }
         if let pane { state.pane = pane }
         if !window.isVisible { window.center() }
-        NSApp.activate()
+        // `activate()` is only a request since macOS 14, and it's refused when Settings is opened
+        // from the panel (⌘,): the panel takes keystrokes without activating Pasty, so another app
+        // is still active and the window would open unfocused behind it.
+        (NSApp as LegacyActivation).activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
 }
+
+/// Reaches the deprecated `activate(ignoringOtherApps:)`, which still activates when asked, without
+/// a deprecation warning.
+@MainActor
+private protocol LegacyActivation {
+    func activate(ignoringOtherApps flag: Bool)
+}
+
+extension NSApplication: LegacyActivation {}
 
 struct SettingsRootView: View {
     let coordinator: AppCoordinator

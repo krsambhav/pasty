@@ -19,9 +19,6 @@ final class QuickLookController: NSObject {
     nonisolated private static let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("Pasty Quick Look", isDirectory: true)
 
-    /// Called when focus leaves both Pasty and Quick Look, e.g. a click in another app.
-    var onFocusLost: (() -> Void)?
-
     init(store: ClipboardStore, host: NSPanel) {
         self.store = store
         self.host = host
@@ -34,9 +31,11 @@ final class QuickLookController: NSObject {
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible
     }
 
-    /// True while the Quick Look window itself has keyboard focus (the user clicked into it).
-    var isKey: Bool {
-        QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isKeyWindow
+    /// Whether Pasty's panel just lost focus to Quick Look rather than to a click elsewhere: no
+    /// mouse button is down (Quick Look finished appearing), or the click is on Quick Look.
+    var tookFocus: Bool {
+        guard isVisible else { return false }
+        return NSEvent.pressedMouseButtons == 0 || QLPreviewPanel.shared().frame.contains(NSEvent.mouseLocation)
     }
 
     func toggle(_ item: ClipItem?) {
@@ -96,7 +95,7 @@ final class QuickLookController: NSObject {
         host.makeKey()
     }
 
-    // MARK: Panel control (forwarded from `PastyPanel`)
+    // MARK: Panel control (forwarded from the app delegate)
 
     func beginControl(_ panel: QLPreviewPanel) {
         panel.dataSource = self
@@ -194,19 +193,8 @@ extension QuickLookController: @preconcurrency QLPreviewPanelDataSource, QLPrevi
         urls[index] as NSURL
     }
 
-    func windowDidResignKey(_ notification: Notification) {
-        // Quick Look was clicked into, and now focus moved on: back to Pasty is fine, anywhere
-        // else dismisses both.
-        DispatchQueue.main.async { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let host = self.host, host.isVisible, !host.isKeyWindow, !self.isKey else { return }
-                self.onFocusLost?()
-            }
-        }
-    }
-
     func windowWillClose(_ notification: Notification) {
-        // Closed with its own close button or Esc while it had focus.
+        // Closed with its own close button.
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated { self?.returnFocus() }
         }

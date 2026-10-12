@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 @main
 enum PastyApp {
@@ -35,6 +36,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         coordinator?.stop()
+    }
+
+    // Quick Look looks for its controller along the key window's responder chain, which ends at
+    // the app delegate. Answering here works whichever window has focus, Quick Look's included.
+
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { coordinator?.panelController.isVisible == true }
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { coordinator?.panelController.quickLook.beginControl(panel) }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { coordinator?.panelController.quickLook.endControl(panel) }
     }
 }
 
