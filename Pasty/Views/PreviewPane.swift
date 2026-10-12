@@ -9,7 +9,7 @@ struct PreviewPane: View {
     var body: some View {
         if let item = model.selectedItem {
             VStack(spacing: 0) {
-                PreviewHeader(item: item)
+                PreviewHeader(item: item, canQuickLook: canQuickLook(item)) { send(.quickLook(item)) }
                 content(for: item)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Separator()
@@ -34,8 +34,10 @@ struct PreviewPane: View {
                     }
             case let .image(image, pixelSize):
                 ImagePreview(image: image, pixelSize: pixelSize)
+                    .onTapGesture { send(.quickLook(item)) }
             case let .files(urls):
                 FilesPreview(urls: urls)
+                    .onTapGesture { send(.quickLook(item)) }
             case let .link(url, display):
                 LinkPreview(url: url, display: display) { send(.open(item)) }
             case let .color(color, hex):
@@ -50,11 +52,21 @@ struct PreviewPane: View {
             Color.clear
         }
     }
+
+    /// Everything but links and colors, which Quick Look has nothing more to show for.
+    private func canQuickLook(_ item: ClipItem) -> Bool {
+        switch model.detail?.itemID == item.id ? model.detail?.content : nil {
+        case .link?, .color?, .data?, .unavailable?: false
+        default: true
+        }
+    }
 }
 
-/// Type and status badges above the content.
+/// Type and status badges above the content, and the Quick Look button.
 private struct PreviewHeader: View {
     let item: ClipItem
+    let canQuickLook: Bool
+    let quickLook: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -63,6 +75,17 @@ private struct PreviewHeader: View {
                 Badge(text: "Pinned", variant: .outline, symbol: "pin.fill")
             }
             Spacer()
+            if canQuickLook {
+                Button(action: quickLook) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye")
+                        Text("Quick Look")
+                        Kbd("⌘Y")
+                    }
+                }
+                .buttonStyle(.shad(.ghost, size: .xs))
+                .help("Open a large preview (⌘Y)")
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 14)

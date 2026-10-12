@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Darwin
 import PastyCore
+import Quartz
 
 /// End-to-end edge-case suite run by `Pasty --smoke-test <dir>` (used in CI).
 ///
@@ -77,6 +78,7 @@ final class SmokeTest {
         await testPermissionDenied(marker: marker)
         if results.accessibilityTrusted {
             await testKeyboard()
+            await testQuickLook(marker: marker)
             await testGlobalHotKey()
             await testMouse()
             await testPasteIntoTextEdit(marker: marker)
@@ -375,6 +377,38 @@ final class SmokeTest {
         _ = await waitFor(seconds: 2) { self.model.filter == .all }
         post(keyCode: kVK_Escape)
         check("Esc closes the panel", await waitFor(seconds: 2) { !self.panel.isVisible })
+    }
+
+    private func testQuickLook(marker: String) async {
+        let older = "Quick Look older \(marker)"
+        let newer = "Quick Look newer \(marker)"
+        copy(older)
+        _ = await waitFor(seconds: 5) { await self.isRecorded(older) }
+        copy(newer)
+        _ = await waitFor(seconds: 5) { await self.isRecorded(newer) }
+        panel.show()
+        await settle()
+        _ = await waitFor(seconds: 2) { self.model.selectedItem?.title == newer }
+
+        func shownText() -> String? {
+            guard QLPreviewPanel.sharedPreviewPanelExists(),
+                  let url = QLPreviewPanel.shared().currentPreviewItem?.previewItemURL else { return nil }
+            return try? String(contentsOf: url, encoding: .utf8)
+        }
+        post(keyCode: kVK_ANSI_Y, flags: .maskCommand)
+        check("⌘Y opens Quick Look", await waitFor(seconds: 3) { self.panel.quickLook.isVisible })
+        check("Quick Look shows the selected entry", await waitFor(seconds: 3) { shownText() == newer }, "showing: \(shownText() ?? "nothing")")
+        if QLPreviewPanel.sharedPreviewPanelExists() {
+            check("Quick Look appears above Pasty", QLPreviewPanel.shared().level.rawValue > panel.panel.level.rawValue)
+        }
+        check("Pasty keeps focus while Quick Look is open", panel.isVisible && panel.panel.isKeyWindow)
+        post(keyCode: kVK_DownArrow)
+        check("Quick Look follows the selection", await waitFor(seconds: 3) { shownText() == older }, "showing: \(shownText() ?? "nothing")")
+        post(keyCode: kVK_Escape)
+        check("Esc closes Quick Look first", await waitFor(seconds: 2) { !self.panel.quickLook.isVisible } && panel.isVisible)
+        check("Pasty has focus again after Quick Look", await waitFor(seconds: 2) { self.panel.panel.isKeyWindow })
+        post(keyCode: kVK_Escape)
+        check("a second Esc closes Pasty", await waitFor(seconds: 2) { !self.panel.isVisible })
     }
 
     private func testGlobalHotKey() async {

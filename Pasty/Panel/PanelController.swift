@@ -1,13 +1,21 @@
 import AppKit
 import Carbon.HIToolbox
 import PastyCore
+import Quartz
 import SwiftUI
 
 /// A borderless, non-activating panel. It takes keyboard focus *without* activating Pasty, so
 /// the app the user was working in stays frontmost — which is what makes paste-back seamless.
 final class PastyPanel: NSPanel {
+    weak var quickLook: QuickLookController?
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    // Quick Look finds its controller through the key window's responder chain.
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { quickLook != nil }
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) { quickLook?.beginControl(panel) }
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { quickLook?.endControl(panel) }
 }
 
 /// Holds a reference to the AppKit search field created inside SwiftUI, so focus can be set
@@ -30,6 +38,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     let panel: PastyPanel
     let searchBridge = SearchFieldBridge()
+    let quickLook: QuickLookController
     private let model: PanelModel
     private let preferences: Preferences
     private var keyMonitor: Any?
@@ -50,7 +59,11 @@ final class PanelController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
+        quickLook = QuickLookController(store: model.store, host: panel)
         super.init()
+        panel.quickLook = quickLook
+        quickLook.onFocusLost = { [weak self] in self?.hide() }
+        model.onSelectionChange = { [weak self] item in self?.quickLook.follow(item) }
         configurePanel()
     }
 
@@ -127,6 +140,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     func hide() {
         guard panel.isVisible else { return }
         removeKeyMonitor()
+        quickLook.close()
         model.showsQuickKeys = false
         panel.orderOut(nil)
         // If Pasty became the frontmost app (e.g. opened from the menu bar), hand focus back.
@@ -162,7 +176,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard panel.isVisible else { return }
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                guard let self, !self.panel.isKeyWindow else { return }
+                // Quick Look taking focus (the user clicked into it) keeps Pasty open.
+                guard let self, !self.panel.isKeyWindow, !self.quickLook.isKey else { return }
                 self.hide()
             }
         }
@@ -174,7 +189,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             let consumed = MainActor.assumeIsolated { () -> Bool in
-                guard let self, event.window === self.panel else { return false }
+                guard let self, event.window === self.panel || (event.window is QLPreviewPanel && self.quickLook.isVisible) else { return false }
                 return self.handle(event)
             }
             return consumed ? nil : event
@@ -198,7 +213,9 @@ final class PanelController: NSObject, NSWindowDelegate {
 
         switch Int(event.keyCode) {
         case kVK_Escape:
-            hide()
+            if quickLook.isVisible { quickLook.close() } else { hide() }
+        case kVK_ANSI_Y where command:
+            quickLook.toggle(selected)
         case kVK_UpArrow:
             command ? model.moveToEdge(top: true) : model.moveSelection(by: -1)
         case kVK_DownArrow:

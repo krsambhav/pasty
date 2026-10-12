@@ -147,6 +147,8 @@ final class AppCoordinator {
             }
         case let .open(item):
             pasteCoordinator.open(item)
+        case let .quickLook(item):
+            panelController.quickLook.toggle(item)
         case .showSettings:
             panelController.hide()
             showSettings()

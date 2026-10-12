@@ -22,6 +22,7 @@ struct ClipDetail {
 
 enum PanelCommand {
     case activate(ClipItem, PasteAction)
+    case quickLook(ClipItem)
     case togglePin(ClipItem)
     case delete(ClipItem)
     case open(ClipItem)
@@ -103,8 +104,14 @@ final class PanelModel {
     /// How the entries are grouped for display ("Today", "Pinned", "Results"…).
     private(set) var sections: [ListSection] = []
     private(set) var selectedID: ClipItem.ID? {
-        didSet { if selectedID != oldValue { loadDetail() } }
+        didSet {
+            guard selectedID != oldValue else { return }
+            loadDetail()
+            onSelectionChange?(selectedItem)
+        }
     }
+    /// Called when a different entry becomes selected (Quick Look follows the selection).
+    @ObservationIgnored var onSelectionChange: ((ClipItem?) -> Void)?
     /// The selected entry and its position in `items`.
     private(set) var selectedItem: ClipItem?
     private(set) var selectedIndex: Int?
