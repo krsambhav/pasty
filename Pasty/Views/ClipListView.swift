@@ -107,6 +107,14 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
         scrollView.verticalScrollElasticity = .allowed
         scrollView.automaticallyAdjustsContentInsets = false
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 6, right: 0)
+
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipViewBoundsDidChange(_:)),
+                                               name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+    }
+
+    @objc private func clipViewBoundsDidChange(_ notification: Notification) {
+        tableView.clipViewDidScroll()
     }
 
     // MARK: Updates from the model
@@ -346,13 +354,14 @@ final class ClipTableView: NSTableView {
         controller?.hoveredRow = nil
     }
 
-    override func scrollWheel(with event: NSEvent) {
-        super.scrollWheel(with: event)
-        // Hover follows the content while scrolling, without per-row tracking areas.
-        if let window {
-            let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-            if visibleRect.contains(location) { updateHover(at: location) } else { controller?.hoveredRow = nil }
-        }
+    // No `scrollWheel(with:)` override: one disables AppKit's responsive scrolling, which caps
+    // scrolling at 60 Hz on ProMotion displays. Hover follows scrolling via `clipViewDidScroll()`.
+
+    /// Hover follows the content while scrolling, without per-row tracking areas.
+    func clipViewDidScroll() {
+        guard let window else { return }
+        let location = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        if visibleRect.contains(location) { updateHover(at: location) } else { controller?.hoveredRow = nil }
     }
 
     private func updateHover(at location: NSPoint) {

@@ -865,6 +865,10 @@ final class SmokeTest {
         results.scroll["rows"] = Double(model.items.count)
         check("the whole history is listed, not just the newest 500", model.items.count > 1_500 + bulk / 2, "\(model.items.count) items")
         check("the list has no visible scroller", !scrollView.hasVerticalScroller)
+        // Without responsive scrolling, trackpad scrolling runs at 60 Hz even on ProMotion displays.
+        if let documentView = scrollView.documentView {
+            check("the list uses responsive scrolling", type(of: documentView).isCompatibleWithResponsiveScrolling)
+        }
         results.scroll["document height pt"] = (maxY).rounded()
 
         var samples: [Double] = []
