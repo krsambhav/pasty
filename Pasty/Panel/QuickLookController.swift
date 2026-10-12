@@ -16,7 +16,7 @@ final class QuickLookController: NSObject {
     /// The entry Quick Look shows (or is loading).
     private var shownID: ClipItem.ID?
     private var loadTask: Task<Void, Never>?
-    private static let directory = FileManager.default.temporaryDirectory
+    nonisolated private static let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("Pasty Quick Look", isDirectory: true)
 
     /// Called when focus leaves both Pasty and Quick Look, e.g. a click in another app.
@@ -140,7 +140,7 @@ final class QuickLookController: NSObject {
                 content = first.data(forAnyOf: PasteboardType.images).map { ($0.data, imageExtension($0.type)) }
             }
         default:
-            content = (snapshot.plainText ?? ContentAnalyzer.derivedText(first)).map { (Data($0.utf8), "txt") }
+            content = (snapshot.plainText ?? ContentAnalyzer.derivedText(from: first)).map { (Data($0.utf8), "txt") }
         }
         guard let content else { return [] }
 
@@ -185,7 +185,7 @@ final class QuickLookController: NSObject {
 
 // MARK: - Data source & delegate
 
-extension QuickLookController: @preconcurrency QLPreviewPanelDataSource, @preconcurrency QLPreviewPanelDelegate {
+extension QuickLookController: @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
         urls.count
     }

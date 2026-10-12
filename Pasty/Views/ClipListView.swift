@@ -219,11 +219,11 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
             return view
         }()
         if case let .item(index)? = content(ofRow: row) {
-            view.isSelectable = true
+            view.isEntry = true
             view.isChosen = index == selectedIndex
             view.isHovered = row == hoveredRow
         } else {
-            view.isSelectable = false
+            view.isEntry = false
             view.isChosen = false
             view.isHovered = false
         }
@@ -372,7 +372,7 @@ final class ClipTableView: NSTableView {
 
 /// Draws the rounded selection / hover background (shadcn "accent").
 final class ClipRowView: NSTableRowView {
-    var isSelectable = true
+    var isEntry = true
     var isChosen = false { didSet { if isChosen != oldValue { needsDisplay = true } } }
     var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
 
@@ -380,7 +380,7 @@ final class ClipRowView: NSTableRowView {
     override func drawSelection(in dirtyRect: NSRect) {}
 
     override func drawBackground(in dirtyRect: NSRect) {
-        guard isSelectable, isChosen || isHovered else { return }
+        guard isEntry, isChosen || isHovered else { return }
         let rect = bounds.insetBy(dx: ClipTableController.horizontalInset, dy: 0)
         Theme.NS.accent.withAlphaComponent(isChosen ? 1 : 0.5).setFill()
         NSBezierPath(roundedRect: rect, xRadius: Theme.radiusMedium, yRadius: Theme.radiusMedium).fill()

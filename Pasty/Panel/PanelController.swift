@@ -13,9 +13,17 @@ final class PastyPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 
     // Quick Look finds its controller through the key window's responder chain.
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { quickLook != nil }
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) { quickLook?.beginControl(panel) }
-    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) { quickLook?.endControl(panel) }
+    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { quickLook != nil }
+    }
+
+    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { quickLook?.beginControl(panel) }
+    }
+
+    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { quickLook?.endControl(panel) }
+    }
 }
 
 /// Holds a reference to the AppKit search field created inside SwiftUI, so focus can be set
