@@ -113,8 +113,8 @@ final class QuickLookController: NSObject {
     // MARK: Files
 
     /// What Quick Look opens for an entry: the copied files themselves, or a temporary file
-    /// holding the content in its richest previewable form.
-    nonisolated private static func files(for item: ClipItem, store: ClipboardStore) async -> [URL] {
+    /// holding the content in its richest previewable form. ⌘O opens the same files.
+    nonisolated static func files(for item: ClipItem, store: ClipboardStore) async -> [URL] {
         guard let snapshot = try? await store.snapshot(for: item.id), let first = snapshot.items.first else { return [] }
         if item.kind == .file {
             return snapshot.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }

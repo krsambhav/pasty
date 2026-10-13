@@ -9,7 +9,7 @@ struct PreviewPane: View {
     var body: some View {
         if let item = model.selectedItem {
             VStack(spacing: 0) {
-                PreviewHeader(item: item, canQuickLook: canQuickLook(item)) { send(.quickLook(item)) }
+                PreviewHeader(item: item, canQuickLook: canQuickLook(item), send: send)
                 content(for: item)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Separator()
@@ -66,7 +66,7 @@ struct PreviewPane: View {
 private struct PreviewHeader: View {
     let item: ClipItem
     let canQuickLook: Bool
-    let quickLook: () -> Void
+    let send: (PanelCommand) -> Void
 
     var body: some View {
         HStack(spacing: 6) {
@@ -76,15 +76,11 @@ private struct PreviewHeader: View {
             }
             Spacer()
             if canQuickLook {
-                Button(action: quickLook) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "eye")
-                        Text("Quick Look")
-                        Kbd("⌘Y")
-                    }
+                if item.kind == .file {
+                    action("Finder", symbol: "folder", key: "⌘R", help: "Show in Finder (⌘R)") { send(.revealInFinder(item)) }
                 }
-                .buttonStyle(.shad(.ghost, size: .xs))
-                .help("Open a large preview (⌘Y)")
+                action("Open", symbol: "arrow.up.forward.app", key: "⌘O", help: "Open in its default app (⌘O)") { send(.open(item)) }
+                action("Quick Look", symbol: "eye", key: "⌘Y", help: "Open a large preview (⌘Y)") { send(.quickLook(item)) }
             }
         }
         .padding(.horizontal, 16)
@@ -93,6 +89,18 @@ private struct PreviewHeader: View {
     }
 
     private var symbol: String { item.symbolName }
+
+    private func action(_ title: String, symbol: String, key: String, help: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                Text(title)
+                Kbd(key)
+            }
+        }
+        .buttonStyle(.shad(.ghost, size: .xs))
+        .help(help)
+    }
 }
 
 private struct PreviewMessage: View {

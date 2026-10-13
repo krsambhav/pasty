@@ -244,6 +244,8 @@ final class PanelController: NSObject, NSWindowDelegate {
             if let selected { onCommand?(.delete(selected)) }
         case kVK_ANSI_O where command:
             if let selected { onCommand?(.open(selected)) }
+        case kVK_ANSI_R where command:
+            if let selected { onCommand?(.revealInFinder(selected)) }
         case kVK_ANSI_C where command:
             // ⌘C copies the entry unless the user is copying text out of the search field.
             let editorSelection = (searchBridge.field?.currentEditor() as? NSTextView)?.selectedRange().length ?? 0

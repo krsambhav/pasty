@@ -88,7 +88,8 @@ The project is signed ad-hoc ("Sign to Run Locally") so it builds without a deve
 | **⌘P** | Pin or unpin |
 | **⌘⌫** | Delete the item |
 | **⌘C** | Copy the item (unless text in the search field is selected) |
-| **⌘O** | Open a link, or reveal a file in Finder |
+| **⌘O** | Open the entry: a link in the browser, a file (or image, text, PDF) in its default app |
+| **⌘R** | Show a copied file in Finder |
 | **⌘Y** | Quick Look: a large preview, like Space in Finder (or click the preview) |
 | **⌘,** | Settings |
 | **Esc** | Close |

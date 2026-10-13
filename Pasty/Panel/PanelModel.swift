@@ -26,6 +26,7 @@ enum PanelCommand {
     case togglePin(ClipItem)
     case delete(ClipItem)
     case open(ClipItem)
+    case revealInFinder(ClipItem)
     case showSettings
     case resumeMonitoring
 }

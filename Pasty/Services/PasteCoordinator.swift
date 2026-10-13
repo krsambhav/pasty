@@ -93,22 +93,32 @@ final class PasteCoordinator {
         return true
     }
 
-    /// Opens a link in the browser or reveals a file in Finder.
+    /// Opens an entry as Finder would: a link in the browser, files in their default apps, and
+    /// anything else (an image, text, a PDF) as the file Quick Look shows, in its default app.
     func open(_ item: ClipItem) {
-        switch item.kind {
-        case .file:
-            guard let path = item.filePath else { return }
-            panel?.hide()
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-        case .url:
-            Task {
+        Task {
+            if item.kind == .url {
                 guard let text = try? await store.preview(for: item.id),
-                      let url = ContentAnalyzer.detectURL(in: text) else { return }
+                      let url = ContentAnalyzer.detectURL(in: text) else { return NSSound.beep() }
                 panel?.hide()
                 NSWorkspace.shared.open(url)
+                return
             }
-        default:
-            break
+            let urls = await QuickLookController.files(for: item, store: store)
+            guard !urls.isEmpty else { return NSSound.beep() }
+            panel?.hide()
+            for url in urls { NSWorkspace.shared.open(url) }
+        }
+    }
+
+    /// Selects copied files in a Finder window.
+    func revealInFinder(_ item: ClipItem) {
+        guard item.kind == .file else { return NSSound.beep() }
+        Task {
+            let urls = await QuickLookController.files(for: item, store: store)
+            guard !urls.isEmpty else { return NSSound.beep() }
+            panel?.hide()
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
         }
     }
 

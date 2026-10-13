@@ -301,8 +301,8 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
         }
         add("Copy", .activate(item, .copy))
         menu.addItem(.separator())
-        if item.kind == .url { add("Open Link", .open(item)) }
-        if item.kind == .file { add("Show in Finder", .open(item)) }
+        add(item.kind == .url ? "Open Link" : "Open", .open(item))
+        if item.kind == .file { add("Show in Finder", .revealInFinder(item)) }
         add(item.isPinned ? "Unpin" : "Pin", .togglePin(item))
         menu.addItem(.separator())
         add("Delete", .delete(item))
