@@ -388,7 +388,7 @@ final class SmokeTest {
         _ = await waitFor(seconds: 5) { await self.isRecorded(newer) }
         panel.show()
         await settle()
-        _ = await waitFor(seconds: 2) { self.model.selectedItem?.title == newer }
+        check("reopening selects the newest entry", await waitFor(seconds: 2) { self.model.selectedItem?.title == newer }, "selected: \(model.selectedItem?.title ?? "nothing")")
 
         func shownText() -> String? {
             guard QLPreviewPanel.sharedPreviewPanelExists(),

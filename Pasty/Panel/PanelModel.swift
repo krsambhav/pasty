@@ -143,6 +143,9 @@ final class PanelModel {
     @ObservationIgnored private var detailTask: Task<Void, Never>?
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
     @ObservationIgnored private var generation = 0
+    /// A query change asked for the selection to go back to the top. Kept until a result is
+    /// applied, so a reload that supersedes the query (e.g. a copy landing just then) still does it.
+    @ObservationIgnored private var pendingSelectionReset = false
     @ObservationIgnored private var scrollToken = 0
     /// Set when the user moves the selection after the query changed, so late-arriving results
     /// don't yank it back to the top.
@@ -200,6 +203,7 @@ final class PanelModel {
     }
 
     private func runQuery(resetSelection: Bool = false) async {
+        if resetSelection { pendingSelectionReset = true }
         generation += 1
         let current = generation
         let query = query
@@ -234,7 +238,8 @@ final class PanelModel {
             // A newer query superseded this one while it ran.
             guard current == generation else { return }
             lastQueryDuration = ContinuousClock.now - started
-            apply(newList, sections: newSections, total: newTotal, resetSelection: resetSelection)
+            apply(newList, sections: newSections, total: newTotal, resetSelection: pendingSelectionReset)
+            pendingSelectionReset = false
         } catch {
             NSLog("Pasty: query failed: \(error)")
         }
