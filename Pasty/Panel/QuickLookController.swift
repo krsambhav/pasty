@@ -115,48 +115,50 @@ final class QuickLookController: NSObject {
     /// What Quick Look opens for an entry: the copied files themselves, or a temporary file
     /// holding the content in its richest previewable form. ⌘O opens the same files.
     nonisolated static func files(for item: ClipItem, store: ClipboardStore) async -> [URL] {
-        guard let snapshot = try? await store.snapshot(for: item.id), let first = snapshot.items.first else { return [] }
+        guard let snapshot = try? await store.snapshot(for: item.id) else { return [] }
         if item.kind == .file {
             return snapshot.fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
         }
-
-        let content: (data: Data, extension: String)?
-        switch item.kind {
-        case .image:
-            content = first.data(forAnyOf: PasteboardType.images).map { ($0.data, imageExtension($0.type)) }
-        case .richText:
-            if let rtf = first.data(for: PasteboardType.rtf) {
-                content = (rtf, "rtf")
-            } else if let html = first.data(for: PasteboardType.html) {
-                content = (html, "html")
-            } else {
-                content = snapshot.plainText.map { (Data($0.utf8), "txt") }
-            }
-        case .other:
-            if let pdf = first.data(for: PasteboardType.pdf) {
-                content = (pdf, "pdf")
-            } else {
-                content = first.data(forAnyOf: PasteboardType.images).map { ($0.data, imageExtension($0.type)) }
-            }
-        default:
-            content = (snapshot.plainText ?? ContentAnalyzer.derivedText(from: first)).map { (Data($0.utf8), "txt") }
-        }
-        guard let content else { return [] }
-
-        return await Task.detached(priority: .userInitiated) { () -> [URL] in
-            // One folder per entry, so the window title can be the entry's own title.
-            let folder = directory.appendingPathComponent(String(item.id), isDirectory: true)
-            let url = folder.appendingPathComponent(fileName(for: item)).appendingPathExtension(content.extension)
-            if !FileManager.default.fileExists(atPath: url.path) {
-                do {
-                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-                    try content.data.write(to: url, options: .atomic)
-                } catch {
-                    return []
-                }
-            }
-            return [url]
+        guard let content = fileContent(for: item, snapshot: snapshot) else { return [] }
+        return await Task.detached(priority: .userInitiated) {
+            temporaryFile(content, for: item).map { [$0] } ?? []
         }.value
+    }
+
+    /// An entry's content in its richest previewable form, with the file extension it takes.
+    nonisolated static func fileContent(for item: ClipItem, snapshot: PasteboardSnapshot) -> (data: Data, extension: String)? {
+        guard let first = snapshot.items.first else { return nil }
+        switch item.kind {
+        case .file:
+            return nil
+        case .image:
+            return first.data(forAnyOf: PasteboardType.images).map { ($0.data, imageExtension($0.type)) }
+        case .richText:
+            if let rtf = first.data(for: PasteboardType.rtf) { return (rtf, "rtf") }
+            if let html = first.data(for: PasteboardType.html) { return (html, "html") }
+            return snapshot.plainText.map { (Data($0.utf8), "txt") }
+        case .other:
+            if let pdf = first.data(for: PasteboardType.pdf) { return (pdf, "pdf") }
+            return first.data(forAnyOf: PasteboardType.images).map { ($0.data, imageExtension($0.type)) }
+        default:
+            return (snapshot.plainText ?? ContentAnalyzer.derivedText(from: first)).map { (Data($0.utf8), "txt") }
+        }
+    }
+
+    /// Writes `content` to a temporary file named after the entry (reused if already written).
+    nonisolated static func temporaryFile(_ content: (data: Data, extension: String), for item: ClipItem) -> URL? {
+        // One folder per entry, so the window title can be the entry's own title.
+        let folder = directory.appendingPathComponent(String(item.id), isDirectory: true)
+        let url = folder.appendingPathComponent(fileName(for: item)).appendingPathExtension(content.extension)
+        if !FileManager.default.fileExists(atPath: url.path) {
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try content.data.write(to: url, options: .atomic)
+            } catch {
+                return nil
+            }
+        }
+        return url
     }
 
     nonisolated private static func imageExtension(_ type: String) -> String {

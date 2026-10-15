@@ -30,6 +30,17 @@ final class HistoryPagingTests: XCTestCase {
         XCTAssertEqual(pager.fetches, 5)
     }
 
+    func testReaderReadsSnapshotsLikeTheStore() async throws {
+        let store = try await seeded(3)
+        let reader = try store.makeReader()
+        let first = try await store.items().first
+        let id = try XCTUnwrap(first?.id)
+        let fromStore = try await store.snapshot(for: id)
+        XCTAssertNotNil(fromStore)
+        XCTAssertEqual(try reader.snapshot(for: id), fromStore)
+        XCTAssertNil(try reader.snapshot(for: -1))
+    }
+
     func testPagingIsExactWhenDatesTie() async throws {
         let store = try await seeded(450, sameDate: true)
         let pager = HistoryPager(reader: try store.makeReader(), filter: .all, layout: try await store.layout())

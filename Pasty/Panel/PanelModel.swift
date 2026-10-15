@@ -163,6 +163,12 @@ final class PanelModel {
         preferences.pasteOnSelect ? .paste : .copy
     }
 
+    /// An entry's stored contents, read synchronously: a drag must fill its pasteboard at once.
+    func storedSnapshot(for id: ClipItem.ID) -> PasteboardSnapshot? {
+        if reader == nil { reader = try? store.makeReader() }
+        return try? reader?.snapshot(for: id)
+    }
+
     // MARK: Presentation
 
     /// Resets transient state so every opening starts at the newest entry with an empty query.

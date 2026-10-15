@@ -47,6 +47,11 @@ public final class HistoryReader {
     public func position(of id: ClipItem.ID, filter: ClipFilter) throws -> Int? {
         try ClipboardStore.position(in: db, of: id, filter: filter)
     }
+
+    /// An entry's stored pasteboard contents.
+    public func snapshot(for id: ClipItem.ID) throws -> PasteboardSnapshot? {
+        try ClipboardStore.snapshot(in: db, for: id)
+    }
 }
 
 /// Random access to a list of any length, loading fixed-size pages on demand and keeping a

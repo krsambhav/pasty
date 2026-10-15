@@ -10,7 +10,8 @@ import UniformTypeIdentifiers
 /// hover is one tracking area for the whole table, menus are built on demand, and thumbnails load
 /// asynchronously into whichever cell is still showing that item.
 ///
-/// Mouse: a single click selects (and previews) an item; a double-click uses it.
+/// Mouse: a single click selects (and previews) an item; a double-click uses it; dragging an item
+/// drops its contents into another app (or, for files, images and PDFs, into Finder).
 struct ClipListView: NSViewRepresentable {
     let model: PanelModel
     let send: (PanelCommand) -> Void
@@ -40,7 +41,7 @@ struct ClipListView: NSViewRepresentable {
 // MARK: - Controller
 
 @MainActor
-final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate, NSDraggingSource {
     enum Row: Equatable {
         case header(String)
         /// An entry, by its index in the model's list.
@@ -283,6 +284,56 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
         send(.activate(item, model.primaryAction))
     }
 
+    // MARK: Dragging
+
+    /// Starts dragging the entry in `row` out of the list, with everything it was copied with.
+    fileprivate func beginDrag(fromRow row: Int, event: NSEvent) {
+        guard let item = item(at: row), let snapshot = model.storedSnapshot(for: item.id) else { return }
+        model.select(at: itemIndex(at: row)!)
+
+        let pasteboardItems = snapshot.items.map { itemSnapshot in
+            let pasteboardItem = NSPasteboardItem()
+            for rep in itemSnapshot.representations {
+                pasteboardItem.setData(rep.data, forType: NSPasteboard.PasteboardType(rep.type))
+            }
+            return pasteboardItem
+        }
+        // Images and PDFs also travel as a file, so dropping one in Finder (or on an upload
+        // field) gives a file rather than nothing. Text stays text: editors would insert a file.
+        if item.kind == .image || item.kind == .other, let first = pasteboardItems.first,
+           !snapshot.allTypes.contains(PasteboardType.fileURL),
+           let content = QuickLookController.fileContent(for: item, snapshot: snapshot),
+           let url = QuickLookController.temporaryFile(content, for: item) {
+            first.setString(url.absoluteString, forType: .fileURL)
+        }
+
+        let frame = tableView.rect(ofRow: row)
+        let image = rowImage(row) as Any?
+        let draggingItems = pasteboardItems.enumerated().map { index, pasteboardItem in
+            let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+            draggingItem.setDraggingFrame(frame, contents: index == 0 ? image : nil)
+            return draggingItem
+        }
+        let session = tableView.beginDraggingSession(with: draggingItems, event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+        session.draggingFormation = .none
+    }
+
+    /// The row as it looks now (highlight included), to drag around.
+    private func rowImage(_ row: Int) -> NSImage? {
+        guard let view = tableView.rowView(atRow: row, makeIfNecessary: false),
+              let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(bitmap)
+        return image
+    }
+
+    func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        // A copy: the entry stays in history, and Finder never moves a copied file.
+        context == .outsideApplication ? .copy : []
+    }
+
     // MARK: Context menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -325,17 +376,34 @@ final class ClipTableController: NSObject, NSTableViewDataSource, NSTableViewDel
 final class ClipTableView: NSTableView {
     weak var controller: ClipTableController?
     private var hoverArea: NSTrackingArea?
+    /// The click that may turn into a drag, until the mouse goes up or moves far enough.
+    private var pendingDragEvent: NSEvent?
 
     override var acceptsFirstResponder: Bool { false }
 
     override func mouseDown(with event: NSEvent) {
+        pendingDragEvent = nil
         let row = row(at: convert(event.locationInWindow, from: nil))
         guard row >= 0 else { return }
         if event.clickCount >= 2 {
             controller?.doubleClicked(row: row)
         } else {
+            pendingDragEvent = event
             controller?.clicked(row: row)
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = pendingDragEvent else { return }
+        let origin = convert(start.locationInWindow, from: nil)
+        let location = convert(event.locationInWindow, from: nil)
+        guard hypot(location.x - origin.x, location.y - origin.y) >= 4 else { return }
+        pendingDragEvent = nil
+        controller?.beginDrag(fromRow: row(at: origin), event: start)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        pendingDragEvent = nil
     }
 
     override func updateTrackingAreas() {

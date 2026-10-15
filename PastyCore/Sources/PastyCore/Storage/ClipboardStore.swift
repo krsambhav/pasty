@@ -446,6 +446,10 @@ public actor ClipboardStore {
 
     /// The stored pasteboard contents of an entry, ready to be written back.
     public func snapshot(for id: ClipItem.ID) throws -> PasteboardSnapshot? {
+        try Self.snapshot(in: db, for: id)
+    }
+
+    static func snapshot(in db: SQLiteConnection, for id: ClipItem.ID) throws -> PasteboardSnapshot? {
         let statement = try db.prepare("SELECT item_index, type, data FROM representations WHERE item_id = ? ORDER BY item_index, position")
             .bind(.integer(id))
         var items: [Int: [PasteboardRepresentation]] = [:]
