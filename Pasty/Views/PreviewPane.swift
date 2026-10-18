@@ -428,7 +428,12 @@ private struct MetadataView: View {
                     }
                 }
             }
-            row("Copied") { Text(copiedText) }
+            if firstCopiedText == lastUsedText {
+                row("Copied") { Text(withCopyCount(lastUsedText)) }
+            } else {
+                row("First copied") { Text(firstCopiedText) }
+                row("Last used") { Text(withCopyCount(lastUsedText)) }
+            }
             row("Content") { Text(contentDescription) }
         }
         .font(.shadXS)
@@ -450,9 +455,17 @@ private struct MetadataView: View {
         }
     }
 
-    private var copiedText: String {
-        let date = item.updatedAt.formatted(date: .abbreviated, time: .shortened)
-        return item.copyCount > 1 ? "\(date) · \(item.copyCount) times" : date
+    private var firstCopiedText: String {
+        item.createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// When the entry was last copied or pasted from Pasty.
+    private var lastUsedText: String {
+        item.updatedAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func withCopyCount(_ date: String) -> String {
+        item.copyCount > 1 ? "\(date) · copied \(item.copyCount) times" : date
     }
 
     private var contentDescription: String {
